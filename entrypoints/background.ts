@@ -258,6 +258,9 @@ async function handleClip(req: ClipRequest): Promise<NativeResponse<CreateNoteRe
     payload = await extract(tab.id, 'article');
   }
 
+  if (payload.kind === 'error') {
+    return { ok: false, error: payload.message, code: 'NO_CONTENT' };
+  }
   if (payload.kind !== 'markdown') {
     return { ok: false, error: 'Extraction produced no content', code: 'EMPTY' };
   }

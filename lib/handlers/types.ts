@@ -32,4 +32,10 @@ export interface DelegatePayload {
   args: Record<string, unknown>;
 }
 
-export type ClipPayload = MarkdownPayload | DelegatePayload;
+// A user-facing reason the clip cannot proceed (e.g. nothing selected).
+export interface ErrorPayload {
+  kind: 'error';
+  message: string;
+}
+
+export type ClipPayload = MarkdownPayload | DelegatePayload | ErrorPayload;
