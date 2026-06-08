@@ -8,6 +8,7 @@ import Defuddle from 'defuddle/full';
 import type { ClipMode, ClipPayload } from '@/lib/handlers/types';
 import { isArxivUrl } from './arxiv';
 import { htmlFragmentToMarkdown } from './turndown';
+import { normalizeBlockMath } from './normalize-block-math';
 
 export async function runChain(mode: ClipMode): Promise<ClipPayload> {
   const url = location.href;
@@ -27,7 +28,7 @@ export async function runChain(mode: ClipMode): Promise<ClipPayload> {
 async function extractArticle(url: string): Promise<ClipPayload> {
   const result = await new Defuddle(document, { url, markdown: true }).parseAsync();
   const title = result.title || document.title || 'Untitled';
-  const markdown = (result.content || '').trim();
+  const markdown = normalizeBlockMath((result.content || '').trim());
 
   return {
     kind: 'markdown',
@@ -87,7 +88,7 @@ function extractSelection(url: string): ClipPayload {
   }
   absolutizeUrls(container);
 
-  const body = htmlFragmentToMarkdown(container.innerHTML).trim();
+  const body = normalizeBlockMath(htmlFragmentToMarkdown(container.innerHTML).trim());
   if (!body) {
     return { kind: 'error', message: 'The selection has no extractable text.' };
   }

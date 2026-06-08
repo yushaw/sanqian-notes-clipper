@@ -1,6 +1,6 @@
 {
   "name": "sanqian-notes-clipper",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Web clipper browser extension for Sanqian Notes",
   "private": true,
   "type": "module",
@@ -9,6 +9,7 @@
     "build": "wxt build",
     "zip": "wxt zip",
     "compile": "tsc --noEmit",
+    "test": "vitest run",
     "postinstall": "wxt prepare"
   },
   "devDependencies": {
@@ -18,6 +19,7 @@
     "@types/turndown": "^5.0.6",
     "@wxt-dev/module-react": "^1.2.2",
     "typescript": "^6.0.3",
+    "vitest": "^4.1.8",
     "wxt": "^0.20.26"
   },
   "dependencies": {
