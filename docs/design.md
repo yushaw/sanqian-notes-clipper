@@ -277,3 +277,25 @@ tags: [clipped]
 - **save_attachment 依赖**（`attachment.ts:461`）：`saveAttachmentBuffer(buffer, ext, originalName?, options?) → { relativePath, fullPath, name, size, type }`；笔记内引用写 `attachment://${relativePath}`。
 - **arxiv**（`import-export/arxiv/index.ts`、`arxiv-importer.ts:77`、`types.ts`）：`arxivImporter` 为导出单例、`parseArxivInput` 由 barrel 导出；`import({ inputs:string[], notebookId?, preferHtml? }) → { success, imported, failed, results:[{ noteId?, title?, error?, source:'html'|'pdf' }] }`；内部 HTML→PDF 兜底，PDF 步依赖 TextIn。
 - **未变更**：bridge router / create_note / get_notebooks 零改动；notes 侧仅 §4 的 4 处新增。
+
+## 15. 媒体本地化：工程债与架构决策（robustness review 2026-06-08）
+
+剪藏时下载所有图片/视频本地化为 `attachment://`（notes 不在 create_note 路径本地化远程图）。一轮长期主义复核，逐条核实标记项、属实者已修：
+
+**已核实属实并修复：**
+- 图片 URL 含 `)` 被正则截断（维基百科式 `Foo_(bar).png`）—— `IMAGE_RE` 改为支持 `<url>` 尖括号、平衡单层括号、可选 `"title"`，已单测覆盖。
+- 串行本地化慢 —— 改为 `mapPool` 有界并发（默认 5）+「并行计算替换、再统一应用」（顺带消除 `result.replace` 的顺序竞态）。
+- 单块失败即整张丢、无重试 —— `uploadBinary` 每块重试（块写入服务端幂等）。
+- markdown `<video>` 块级扩展误伤散文（句中 `<video>` 提及会把段落劈碎）—— 去掉 marked 扩展的 `start()`（只在块边界触发）+ 要求有 `src` 才识别；已单测覆盖（`media-tag.test.ts`）。
+- `String.replace` 的 `$` 注入（alt 含 `$&` 等损坏输出）—— 全改函数替换。
+- 分块累积无上限 —— `MAX_CHUNK_TRANSFER_PARTS=256` 封顶 + saveAttachmentBuffer 100MB 终检；中断传输首块时清理残留。
+
+**核实后修正/保留（非疏忽）：**
+- 内存「~2x」是我先前的误述，实为**每项 ~1x**（持有 bytes，base64 按块瞬时生成）；并发下峰值 ≈ 并发数 × 最大在飞项。图片小、视频罕见，峰值可控，保留并发=5。
+- `save_attachment`（单发）非死代码 —— 它是 bridge 暴露的通用单发附件工具，任何 MCP 客户端可用；扩展统一走 chunk（chunk 单块等价单发，无额外收益），故 save_attachment 有意保留作通用 API。
+
+**架构决策（ADR）：分块走 bridge-tool vs 新开二进制流式上传端点**
+- 决策：复用现有 tool/proxy 契约做分块上传，**不**为媒体新开独立的二进制流式 HTTP 端点。
+- 理由：剪藏的媒体是偶发图片 + 少量视频；分块方案零新增对外面、零 host 改动（host 的 `proxy_tool` 原样转发），契约稳定。流式端点是更优解但属过度设计（YAGNI）。
+- 触发条件（何时重评）：若视频成为高频/大体量场景（如批量视频剪藏），分块的多次 base64 编解码 + 临时文件拼接 + 多轮往返成本会显著，届时改为流式上传端点（host 直传二进制 body 给一个非 tool 路由）。在此之前维持现状。
+- 已知残留债（量级可接受，未修，明确标记）：并发下多个大视频同时在飞的峰值内存；分块"拼接前落临时文件"的双倍磁盘 churn。

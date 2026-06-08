@@ -32,7 +32,9 @@ async function extract(tabId: number, mode: ClipMode): Promise<ClipPayload> {
 // bridge body cap), rewriting to attachment://. YouTube/Vimeo become <iframe>
 // (Notes renders an embed block). Failed image fetches are dropped; failed video
 // fetches fall back to a link rather than being lost.
-const IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
+// Image URL grammar: an optional <...> wrap, a bare URL allowing balanced
+// single-level parens (e.g. wikipedia Foo_(bar).png), and an optional "title".
+const IMAGE_RE = /!\[([^\]]*)\]\(\s*(<[^>]*>|[^\s()]+(?:\([^\s()]*\)[^\s()]*)*)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)/g;
 const DATA_IMAGE_RE = /^data:([^;,]+);base64,(.+)$/s;
 const MEDIA_TAG_RE = /<(video|audio)\b[^>]*>[\s\S]*?<\/\1>/gi;
 
@@ -40,6 +42,29 @@ const MEDIA_TAG_RE = /<(video|audio)\b[^>]*>[\s\S]*?<\/\1>/gi;
 const CHUNK_BYTES = 500_000;
 // Skip absurdly large media to avoid multi-minute uploads.
 const MAX_MEDIA_BYTES = 80 * 1024 * 1024;
+// Localize images/videos concurrently (most are small; peak memory ~= this x the
+// largest in-flight item). Retry each chunk a few times to survive transient blips.
+const LOCALIZE_CONCURRENCY = 5;
+const CHUNK_RETRIES = 2;
+
+function unwrapUrl(raw: string): string {
+  const t = raw.trim();
+  return t.startsWith('<') && t.endsWith('>') ? t.slice(1, -1).trim() : t;
+}
+
+// Run async tasks with bounded concurrency, preserving input order.
+async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -69,22 +94,28 @@ async function fetchBinary(url: string): Promise<Binary | null> {
 }
 
 // Upload bytes as an attachment in <1MB chunks; returns its attachment:// URL.
+// Each chunk is retried a few times (chunk writes are idempotent server-side).
 async function uploadBinary(bytes: Uint8Array, mime: string, filename?: string): Promise<string | null> {
   if (bytes.length === 0 || bytes.length > MAX_MEDIA_BYTES) return null;
   const transferId = crypto.randomUUID();
   const total = Math.max(1, Math.ceil(bytes.length / CHUNK_BYTES));
   let url: string | null = null;
   for (let seq = 0; seq < total; seq++) {
-    const slice = bytes.subarray(seq * CHUNK_BYTES, (seq + 1) * CHUNK_BYTES);
-    const resp = await callTool<{ url?: string }>('save_attachment_chunk', {
-      transfer_id: transferId,
-      seq,
-      total_chunks: total,
-      data_base64: bytesToBase64(slice),
-      filename,
-      mime,
-    });
-    if (!resp.ok) return null;
+    const data_base64 = bytesToBase64(bytes.subarray(seq * CHUNK_BYTES, (seq + 1) * CHUNK_BYTES));
+    let resp: NativeResponse<{ url?: string }> | undefined;
+    for (let attempt = 0; attempt <= CHUNK_RETRIES; attempt++) {
+      resp = await callTool<{ url?: string }>('save_attachment_chunk', {
+        transfer_id: transferId,
+        seq,
+        total_chunks: total,
+        data_base64,
+        filename,
+        mime,
+      });
+      if (resp.ok) break;
+      await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
+    }
+    if (!resp?.ok) return null;
     if (resp.result?.url) url = resp.result.url;
   }
   return url;
@@ -108,81 +139,95 @@ function toEmbedIframe(url: string): string | null {
   return null;
 }
 
-// <video>/<audio> tags -> download + embed as a Notes media node; link on failure.
-async function localizeMediaTags(markdown: string): Promise<string> {
-  const blocks = [...markdown.matchAll(MEDIA_TAG_RE)];
+interface Replacement {
+  full: string;
+  // string -> replace; '' -> drop; null -> leave untouched
+  value: string | null;
+}
+
+// Apply computed replacements. Function replacer inserts the value literally
+// ($$, $&, etc. in a string replacement would be reinterpreted). Each op targets
+// the first remaining occurrence of its match, so duplicates are handled in order.
+function applyReplacements(markdown: string, ops: Replacement[]): string {
   let result = markdown;
-  for (const [block, rawTag] of blocks) {
-    const tag = rawTag.toLowerCase();
-    const src = /\bsrc=["']([^"']+)["']/i.exec(block)?.[1];
-    if (!src) {
-      result = result.replace(block, '');
-      continue;
-    }
-    let replacement = `[${tag === 'video' ? 'Video' : 'Audio'}](${src})`;
-    if (/^https?:\/\//i.test(src)) {
-      const fetched = await fetchBinary(src);
-      if (fetched) {
-        const url = await uploadBinary(fetched.bytes, fetched.mime, filenameFromUrl(src));
-        if (url) replacement = `\n\n<${tag} src="${url}"></${tag}>\n\n`;
-      }
-    }
-    // Function replacer: value is inserted literally (string replacements would
-    // interpret $$, $&, etc. in alt/URL text).
-    result = result.replace(block, () => replacement);
+  for (const { full, value } of ops) {
+    if (value === null) continue;
+    result = result.replace(full, () => value);
   }
   return result;
 }
 
-async function localizeImages(markdown: string): Promise<string> {
-  const matches = [...markdown.matchAll(IMAGE_RE)];
-  let result = markdown;
-  for (const match of matches) {
-    const [full, alt, url] = match;
-
-    const embed = toEmbedIframe(url);
-    if (embed) {
-      result = result.replace(full, () => `\n\n${embed}\n\n`);
-      continue;
+// One <video>/<audio> tag -> a Notes media node (downloaded), or a link on failure.
+async function mediaTagReplacement(block: string, rawTag: string): Promise<string> {
+  const tag = rawTag.toLowerCase();
+  const src = /\bsrc=["']([^"']+)["']/i.exec(block)?.[1];
+  if (!src) return '';
+  if (/^https?:\/\//i.test(src)) {
+    const fetched = await fetchBinary(src);
+    if (fetched) {
+      const url = await uploadBinary(fetched.bytes, fetched.mime, filenameFromUrl(src));
+      if (url) return `\n\n<${tag} src="${url}"></${tag}>\n\n`;
     }
-
-    let bytes: Uint8Array | undefined;
-    let mime: string | undefined;
-
-    const dataMatch = DATA_IMAGE_RE.exec(url);
-    if (dataMatch) {
-      mime = dataMatch[1];
-      try {
-        bytes = Uint8Array.from(atob(dataMatch[2]), (c) => c.charCodeAt(0));
-      } catch {
-        bytes = undefined;
-      }
-    } else if (/^https?:\/\//i.test(url)) {
-      const fetched = await fetchBinary(url);
-      if (fetched && fetched.mime.startsWith('image/')) {
-        bytes = fetched.bytes;
-        mime = fetched.mime;
-      }
-    } else {
-      continue; // relative/unknown scheme: leave untouched
-    }
-
-    if (!bytes || !mime) {
-      result = result.replace(full, ''); // non-image / failed -> drop
-      continue;
-    }
-    const localized = await uploadBinary(bytes, mime, filenameFromUrl(url));
-    result = localized ? result.replace(full, () => `![${alt}](${localized})`) : result.replace(full, () => '');
   }
-  return result;
+  return `[${tag === 'video' ? 'Video' : 'Audio'}](${src})`;
+}
+
+// One ![](...) -> localized attachment image, embed iframe, dropped, or untouched.
+async function imageReplacement(alt: string, rawUrl: string): Promise<string | null> {
+  const url = unwrapUrl(rawUrl);
+
+  const embed = toEmbedIframe(url);
+  if (embed) return `\n\n${embed}\n\n`;
+
+  let bytes: Uint8Array | undefined;
+  let mime: string | undefined;
+
+  const dataMatch = DATA_IMAGE_RE.exec(url);
+  if (dataMatch) {
+    mime = dataMatch[1];
+    try {
+      bytes = Uint8Array.from(atob(dataMatch[2]), (c) => c.charCodeAt(0));
+    } catch {
+      bytes = undefined;
+    }
+  } else if (/^https?:\/\//i.test(url)) {
+    const fetched = await fetchBinary(url);
+    if (fetched && fetched.mime.startsWith('image/')) {
+      bytes = fetched.bytes;
+      mime = fetched.mime;
+    }
+  } else {
+    return null; // relative/unknown scheme: leave untouched
+  }
+
+  if (!bytes || !mime) return ''; // non-image / failed -> drop
+  const localized = await uploadBinary(bytes, mime, filenameFromUrl(url));
+  return localized ? `![${alt}](${localized})` : '';
+}
+
+// Localize all media: <video>/<audio> tags first, then ![](...) images/embeds.
+// Each pass computes replacements concurrently (bounded), then applies them.
+async function localizeMedia(markdown: string): Promise<string> {
+  const tagMatches = [...markdown.matchAll(MEDIA_TAG_RE)];
+  const tagOps = await mapPool(tagMatches, LOCALIZE_CONCURRENCY, async (m) => ({
+    full: m[0],
+    value: await mediaTagReplacement(m[0], m[1]),
+  }));
+  let result = applyReplacements(markdown, tagOps);
+
+  const imgMatches = [...result.matchAll(IMAGE_RE)];
+  const imgOps = await mapPool(imgMatches, LOCALIZE_CONCURRENCY, async (m) => ({
+    full: m[0],
+    value: await imageReplacement(m[1], m[2]),
+  }));
+  return applyReplacements(result, imgOps);
 }
 
 async function createNoteFromPayload(
   payload: Extract<ClipPayload, { kind: 'markdown' }>,
   notebookId: string | undefined,
 ): Promise<NativeResponse<CreateNoteResult>> {
-  let markdown = await localizeMediaTags(payload.markdown);
-  markdown = await localizeImages(markdown);
+  const markdown = await localizeMedia(payload.markdown);
   const content = buildNoteContent({ ...payload, markdown }, new Date().toISOString());
   const args: Record<string, unknown> = { title: payload.title, content };
   if (notebookId) {
