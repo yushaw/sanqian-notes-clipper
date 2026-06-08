@@ -50,7 +50,10 @@ extension talks to). The interface is available in English and Chinese.
 - Uses data for purposes unrelated to single purpose: no.
 
 ## Privacy policy URL
-Host PRIVACY.md (e.g. on GitHub / GitHub Pages) and put its URL here.
+https://github.com/yushaw/sanqian-notes-clipper/blob/main/PRIVACY.md
+
+## Support URL
+https://github.com/yushaw/sanqian-notes-clipper/issues
 
 ## Assets needed (provide before submitting)
 - Icon 128×128 (already in the build: public/icon/128.png).

@@ -52,4 +52,4 @@ Sanqian Notes app and are managed there.
 
 ## Contact
 
-Questions about this policy can be directed to the project maintainer.
+Questions about this policy: https://github.com/yushaw/sanqian-notes-clipper/issues
