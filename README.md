@@ -33,7 +33,7 @@ running locally.
 
    ```sh
    npm install
-   npm run build      # outputs .output/chrome-mv3
+   npm run build      # outputs output/chrome-mv3
    ```
 
 2. Build the native host:
@@ -43,7 +43,7 @@ running locally.
    ```
 
 3. Load the extension: open `chrome://extensions`, enable Developer mode,
-   "Load unpacked" → select `.output/chrome-mv3`. Copy the extension ID shown
+   "Load unpacked" → select `output/chrome-mv3`. Copy the extension ID shown
    on the card.
 
 4. Register the native host (uses that ID):

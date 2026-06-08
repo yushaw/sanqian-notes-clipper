@@ -5,7 +5,7 @@
 #
 # Usage: scripts/install-host-dev.sh <extension-id>
 #   Find <extension-id> at chrome://extensions (enable Developer mode, then
-#   "Load unpacked" the .output/chrome-mv3 dir; copy the ID shown on the card).
+#   "Load unpacked" the output/chrome-mv3 dir; copy the ID shown on the card).
 set -euo pipefail
 
 EXT_ID="${1:-}"

@@ -8,7 +8,7 @@ to sequence correctly — that's the main thing this doc gets right.
 ## 0. Prerequisites
 - A Chrome Web Store **developer account** (one-time US$5 registration).
 - The built upload zip: `npm run build && npx wxt zip` →
-  `.output/sanqian-notes-clipper-<version>-chrome.zip`.
+  `output/sanqian-notes-clipper-<version>-chrome.zip`.
 - A hosted **privacy policy URL** (host `PRIVACY.md`, e.g. on GitHub Pages).
 - Store listing text + assets — see `docs/store-listing.md` (needs ≥1 screenshot).
 
