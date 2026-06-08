@@ -5,7 +5,7 @@ export default defineConfig({
   modules: ['@wxt-dev/module-react', '@wxt-dev/i18n/module'],
   manifest: {
     name: 'Sanqian Clipper',
-    description: 'Clip web pages into Sanqian Notes.',
+    description: '__MSG_extDescription__',
     default_locale: 'en',
     // nativeMessaging: talk to the com.sanqian_notes.native host.
     // activeTab/scripting: read the current page on user action.

@@ -1,6 +1,7 @@
 {
+  "extDescription": "将网页剪藏到三千笔记。",
   "popup": {
-    "header": "Sanqian Notes",
+    "header": "三千笔记",
     "notebook": "笔记本",
     "inbox": "收集箱",
     "clip": "剪藏此页",
@@ -8,7 +9,7 @@
     "conn": {
       "checking": "检查中…",
       "connected": "已连接",
-      "notRunning": "Notes 未运行",
+      "notRunning": "三千笔记未运行",
       "noHost": "未安装 host"
     },
     "mode": {

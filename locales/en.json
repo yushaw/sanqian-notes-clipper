@@ -1,4 +1,5 @@
 {
+  "extDescription": "Clip web pages into Sanqian Notes.",
   "popup": {
     "header": "Sanqian Notes",
     "notebook": "Notebook",
