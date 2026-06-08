@@ -250,7 +250,7 @@ tags: [clipped]
 
 1. [x] bridge 暴露 `save_attachment`（§4.3）— 点亮 M3 剪藏时下载图片。已加（mutations.ts + NOTE_TOOL_NAMES/ANNOTATIONS + buildNoteTools），含 parity/http-adapter 测试。
 2. [x] bridge 暴露 `import_arxiv`（§4.4）— 点亮 arxiv 结构化导入。已加（薄封装 arxivImporter.import + parseArxivInput 权威判定）。
-3. [ ] 主进程自注册 NativeMessagingHosts manifest + 打包 Go 二进制（§4.1/4.2）— 生产分发。**推迟到实地测试后**：联调用 dev install 脚本即可注册 host，不必先打包。
+3. [x] 主进程自注册 NativeMessagingHosts manifest + 打包 Go 二进制（§4.1/4.2）。已加 `src/main/native-messaging.ts`（仅 app.isPackaged 生产态注册，dev 用 install 脚本避免覆盖）、electron-builder 打包 `resources/native-host/`（二进制 gitignore，从 clipper build.sh 构建拷入）。扩展 ID 为占位常量 + 环境变量覆盖，发布前填 Web Store id。
 
 1/2 的 sdk+mcp 测试 240 全过、tsc 0 错。扩展侧已对 1/2 做优雅降级，工具上线即自动生效，无需改扩展。
 注意：worktree 软链了主 checkout 的 node_modules，直接 new Database() 的 DB 原生测试因 better-sqlite3 ABI(145 vs 115) 失败 11 个——环境产物非回归，独立 npm install 后可绿。

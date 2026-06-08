@@ -15,7 +15,7 @@ if [[ -z "$EXT_ID" ]]; then
   exit 1
 fi
 
-HOST_NAME="com.sanqian-notes.native"
+HOST_NAME="com.sanqian_notes.native"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 ARCH="$(uname -m)"

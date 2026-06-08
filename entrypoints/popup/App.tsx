@@ -29,6 +29,7 @@ export function App() {
   const [mode, setMode] = useState<ClipMode>('auto');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
+  const [connError, setConnError] = useState('');
 
   useEffect(() => {
     void (async () => {
@@ -40,6 +41,7 @@ export function App() {
         setConn('not-running');
       } else {
         setConn('no-host');
+        if (resp && 'error' in resp && resp.error) setConnError(resp.error);
       }
     })();
   }, []);
@@ -128,6 +130,9 @@ export function App() {
         {busy ? 'Clipping…' : 'Clip this page'}
       </button>
 
+      {conn === 'no-host' && connError && (
+        <p className="clipper__status">Host error: {connError}</p>
+      )}
       {status && <p className="clipper__status">{status}</p>}
     </div>
   );

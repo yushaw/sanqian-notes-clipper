@@ -6,7 +6,8 @@
 
 import { browser } from 'wxt/browser';
 
-const HOST_NAME = 'com.sanqian-notes.native';
+// Chrome forbids hyphens in native messaging host names (only [a-z0-9._]).
+const HOST_NAME = 'com.sanqian_notes.native';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
@@ -63,6 +64,8 @@ function sendNative<T = unknown>(
 
     port.onDisconnect.addListener(() => {
       const err = browser.runtime.lastError;
+      // Surface the real reason in the service worker console for diagnosis.
+      console.warn('[clipper] native host disconnected:', err?.message, message);
       finish({
         ok: false,
         error: err?.message ?? 'Native host disconnected (is it installed?)',
