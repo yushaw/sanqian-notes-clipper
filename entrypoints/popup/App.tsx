@@ -51,16 +51,13 @@ export function App() {
     const writable = (result?.notebooks ?? []).filter((n) => n.writable);
     setNotebooks(writable);
 
+    // '' is a valid stored value meaning Inbox (no notebook). Default to Inbox
+    // unless a remembered notebook still exists.
     const stored = (await browser.storage.local.get(LAST_NOTEBOOK_KEY))[LAST_NOTEBOOK_KEY] as
       | string
       | undefined;
-    const preferred =
-      writable.find((n) => n.id === stored) ??
-      writable.find((n) => n.source_type === 'internal') ??
-      writable[0];
-    if (preferred) {
-      setNotebookId(preferred.id);
-    }
+    const matched = stored ? writable.find((n) => n.id === stored) : undefined;
+    setNotebookId(matched ? matched.id : '');
   }
 
   async function clip(): Promise<void> {
@@ -100,9 +97,9 @@ export function App() {
         <select
           value={notebookId}
           onChange={(e) => setNotebookId(e.target.value)}
-          disabled={!connected || notebooks.length === 0}
+          disabled={!connected}
         >
-          {notebooks.length === 0 && <option value="">(default inbox)</option>}
+          <option value="">Inbox</option>
           {notebooks.map((n) => (
             <option key={n.id} value={n.id}>
               {n.name}
