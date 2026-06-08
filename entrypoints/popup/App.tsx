@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { browser } from 'wxt/browser';
+import { i18n } from '#i18n';
 import type { NativeResponse } from '@/lib/native';
 import type { CreateNoteResult } from '@/lib/clip';
 import type { Notebook, ListNotebooksResult } from '@/lib/notebooks';
@@ -7,18 +8,18 @@ import type { ClipMode } from '@/lib/handlers/types';
 
 type ConnState = 'checking' | 'connected' | 'not-running' | 'no-host';
 
-const CONN_LABEL: Record<ConnState, string> = {
-  checking: 'Checking…',
-  connected: 'Connected',
-  'not-running': 'Notes not running',
-  'no-host': 'Host not installed',
-};
+const CONN_KEY = {
+  checking: 'popup.conn.checking',
+  connected: 'popup.conn.connected',
+  'not-running': 'popup.conn.notRunning',
+  'no-host': 'popup.conn.noHost',
+} as const satisfies Record<ConnState, `popup.conn.${string}`>;
 
-const MODES: { value: ClipMode; label: string }[] = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'article', label: 'Article' },
-  { value: 'selection', label: 'Selection' },
-];
+const MODES = [
+  { value: 'auto', labelKey: 'popup.mode.auto' },
+  { value: 'article', labelKey: 'popup.mode.article' },
+  { value: 'selection', labelKey: 'popup.mode.selection' },
+] as const satisfies ReadonlyArray<{ value: ClipMode; labelKey: `popup.mode.${string}` }>;
 
 const LAST_NOTEBOOK_KEY = 'lastNotebookId';
 
@@ -72,12 +73,13 @@ export function App() {
       })) as NativeResponse<CreateNoteResult>;
 
       if (resp?.ok) {
-        setStatus(`Saved: ${resp.result?.title ?? 'note'}`);
+        setStatus(`${i18n.t('popup.status.saved')}: ${resp.result?.title ?? i18n.t('popup.status.note')}`);
       } else {
-        setStatus(`Failed: ${(resp && 'error' in resp && resp.error) || 'unknown error'}`);
+        const detail = (resp && 'error' in resp && resp.error) || i18n.t('popup.status.unknownError');
+        setStatus(`${i18n.t('popup.status.failed')}: ${detail}`);
       }
     } catch (e) {
-      setStatus(`Error: ${String(e)}`);
+      setStatus(`${i18n.t('popup.status.error')}: ${String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -88,18 +90,14 @@ export function App() {
   return (
     <div className="clipper">
       <header className="clipper__header">
-        <h1>Sanqian Notes</h1>
-        <span className={`clipper__conn clipper__conn--${conn}`}>{CONN_LABEL[conn]}</span>
+        <h1>{i18n.t('popup.header')}</h1>
+        <span className={`clipper__conn clipper__conn--${conn}`}>{i18n.t(CONN_KEY[conn])}</span>
       </header>
 
       <label className="clipper__field">
-        <span>Notebook</span>
-        <select
-          value={notebookId}
-          onChange={(e) => setNotebookId(e.target.value)}
-          disabled={!connected}
-        >
-          <option value="">Inbox</option>
+        <span>{i18n.t('popup.notebook')}</span>
+        <select value={notebookId} onChange={(e) => setNotebookId(e.target.value)} disabled={!connected}>
+          <option value="">{i18n.t('popup.inbox')}</option>
           {notebooks.map((n) => (
             <option key={n.id} value={n.id}>
               {n.name}
@@ -108,7 +106,7 @@ export function App() {
         </select>
       </label>
 
-      <div className="clipper__modes" role="radiogroup" aria-label="Clip mode">
+      <div className="clipper__modes" role="radiogroup" aria-label={i18n.t('popup.clip')}>
         {MODES.map((m) => (
           <button
             key={m.value}
@@ -118,17 +116,19 @@ export function App() {
             onClick={() => setMode(m.value)}
             disabled={!connected}
           >
-            {m.label}
+            {i18n.t(m.labelKey)}
           </button>
         ))}
       </div>
 
       <button className="clipper__button" onClick={clip} disabled={busy || !connected}>
-        {busy ? 'Clipping…' : 'Clip this page'}
+        {busy ? i18n.t('popup.clipping') : i18n.t('popup.clip')}
       </button>
 
       {conn === 'no-host' && connError && (
-        <p className="clipper__status">Host error: {connError}</p>
+        <p className="clipper__status">
+          {i18n.t('popup.status.hostError')}: {connError}
+        </p>
       )}
       {status && <p className="clipper__status">{status}</p>}
     </div>

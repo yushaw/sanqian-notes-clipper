@@ -1,0 +1,29 @@
+{
+  "popup": {
+    "header": "Sanqian Notes",
+    "notebook": "Notebook",
+    "inbox": "Inbox",
+    "clip": "Clip this page",
+    "clipping": "Clipping…",
+    "conn": {
+      "checking": "Checking…",
+      "connected": "Connected",
+      "notRunning": "Notes not running",
+      "noHost": "Host not installed"
+    },
+    "mode": {
+      "auto": "Auto",
+      "article": "Article",
+      "selection": "Selection"
+    },
+    "status": {
+      "saved": "Saved",
+      "failed": "Failed",
+      "error": "Error",
+      "hostError": "Host error",
+      "note": "note",
+      "unknownError": "unknown error",
+      "noActiveTab": "No active tab"
+    }
+  }
+}

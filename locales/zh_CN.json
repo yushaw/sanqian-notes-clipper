@@ -1,0 +1,29 @@
+{
+  "popup": {
+    "header": "Sanqian Notes",
+    "notebook": "笔记本",
+    "inbox": "收集箱",
+    "clip": "剪藏此页",
+    "clipping": "剪藏中…",
+    "conn": {
+      "checking": "检查中…",
+      "connected": "已连接",
+      "notRunning": "Notes 未运行",
+      "noHost": "未安装 host"
+    },
+    "mode": {
+      "auto": "自动",
+      "article": "正文",
+      "selection": "选区"
+    },
+    "status": {
+      "saved": "已保存",
+      "failed": "失败",
+      "error": "错误",
+      "hostError": "Host 错误",
+      "note": "笔记",
+      "unknownError": "未知错误",
+      "noActiveTab": "没有活动标签页"
+    }
+  }
+}
