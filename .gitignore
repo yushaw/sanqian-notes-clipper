@@ -1,0 +1,10 @@
+node_modules/
+.output/
+.wxt/
+stats.html
+*.log
+
+# Go build artifacts (regenerate with native-host/build.sh)
+native-host/bin/
+
+.DS_Store
