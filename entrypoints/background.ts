@@ -1,5 +1,5 @@
 import { browser } from 'wxt/browser';
-import { callTool, getConnection, type NativeResponse } from '@/lib/native';
+import { callTool, getConnection, ensureRunning, type NativeResponse } from '@/lib/native';
 import { listNotebooks } from '@/lib/notebooks';
 import { buildNoteContent } from '@/lib/frontmatter';
 import type { CreateNoteResult } from '@/lib/clip';
@@ -349,6 +349,18 @@ async function handleClip(req: ClipRequest): Promise<NativeResponse<CreateNoteRe
   let response: NativeResponse<CreateNoteResult> | null = null;
   await runClipJob(tabId, () =>
     withKeepalive(async () => {
+      // Make sure Notes is up first: launches it where supported (macOS) and
+      // waits for the bridge. On failure (not installed / not running / launch
+      // timeout) abort before extracting; the popup surfaces the reason.
+      // UNKNOWN_ACTION means an older native host predates ensure_running — skip
+      // the gate and let the tool call itself report if Notes is unreachable, so
+      // updating the extension ahead of the app does not break every clip.
+      const ready = await ensureRunning();
+      const readyCode = !ready.ok && 'code' in ready ? ready.code : undefined;
+      if (!ready.ok && readyCode !== 'UNKNOWN_ACTION') {
+        response = { ok: false, error: ready.error, code: readyCode };
+        return { ok: false, error: ready.error };
+      }
       const resp = await doClip(req, tabId);
       response = resp;
       return resp.ok

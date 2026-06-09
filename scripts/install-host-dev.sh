@@ -3,17 +3,18 @@
 # the clipper's Go host. The production app will do this itself later (§4.1 of
 # docs/design.md); for development we install it manually.
 #
-# Usage: scripts/install-host-dev.sh <extension-id>
-#   Find <extension-id> at chrome://extensions (enable Developer mode, then
-#   "Load unpacked" the output/chrome-mv3 dir; copy the ID shown on the card).
+# Usage: scripts/install-host-dev.sh [extension-id]
+#   With no argument it allows the known unpacked-dev id plus the Web Store id.
+#   Pass an id to allow a different unpacked build (the store id stays allowed).
+#   Find the id at chrome://extensions (Developer mode -> Load unpacked
+#   output/chrome-mv3; copy the ID on the card).
 set -euo pipefail
 
-EXT_ID="${1:-}"
-if [[ -z "$EXT_ID" ]]; then
-  echo "Usage: $0 <extension-id>" >&2
-  echo "Get the ID from chrome://extensions after Load unpacked." >&2
-  exit 1
-fi
+# Default to the known dev (unpacked) id; pass a different one to override.
+# The published Web Store id is always allowed too, so one manifest serves both.
+DEV_EXT_ID="lbblgoaciihninlcnhhlfocplmdooimh"
+STORE_EXT_ID="laalgfbnbddjohobhaibbiafcjpkojef"
+EXT_ID="${1:-$DEV_EXT_ID}"
 
 HOST_NAME="com.sanqian_notes.native"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -30,6 +31,13 @@ if [[ ! -x "$BIN" ]]; then
   (cd "$ROOT/native-host" && go build -trimpath -ldflags "-s -w" -o "$BIN" .)
 fi
 
+# Allow the (dev) extension plus the published Web Store id (deduped).
+ORIGINS="    \"chrome-extension://$EXT_ID/\""
+if [[ "$EXT_ID" != "$STORE_EXT_ID" ]]; then
+  ORIGINS="$ORIGINS,
+    \"chrome-extension://$STORE_EXT_ID/\""
+fi
+
 MANIFEST=$(cat <<JSON
 {
   "name": "$HOST_NAME",
@@ -37,7 +45,7 @@ MANIFEST=$(cat <<JSON
   "path": "$BIN",
   "type": "stdio",
   "allowed_origins": [
-    "chrome-extension://$EXT_ID/"
+$ORIGINS
   ]
 }
 JSON
@@ -72,5 +80,5 @@ fi
 echo
 echo "Done."
 echo "  host binary : $BIN"
-echo "  extension   : $EXT_ID"
+echo "  extensions  : $EXT_ID, $STORE_EXT_ID"
 echo "Reload the extension at chrome://extensions, then click the toolbar icon."

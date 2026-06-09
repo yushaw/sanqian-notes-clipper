@@ -6,11 +6,18 @@
     "inbox": "收集箱",
     "clip": "剪藏此页",
     "clipping": "剪藏中…",
+    "openAndClip": "打开并剪藏",
+    "download": "下载三千笔记",
     "conn": {
       "checking": "检查中…",
       "connected": "已连接",
       "notRunning": "三千笔记未运行",
+      "notInstalled": "三千笔记未安装",
       "noHost": "未安装 host"
+    },
+    "hint": {
+      "notRunning": "请先打开三千笔记,再剪藏。",
+      "notInstalled": "安装三千笔记后即可剪藏到这里。"
     },
     "mode": {
       "auto": "自动",

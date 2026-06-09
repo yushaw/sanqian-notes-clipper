@@ -6,11 +6,18 @@
     "inbox": "Inbox",
     "clip": "Clip this page",
     "clipping": "Clipping…",
+    "openAndClip": "Open Notes & Clip",
+    "download": "Download Sanqian Notes",
     "conn": {
       "checking": "Checking…",
       "connected": "Connected",
       "notRunning": "Notes not running",
+      "notInstalled": "Notes not installed",
       "noHost": "Host not installed"
+    },
+    "hint": {
+      "notRunning": "Open Sanqian Notes first, then clip.",
+      "notInstalled": "Install Sanqian Notes to clip pages into it."
     },
     "mode": {
       "auto": "Auto",

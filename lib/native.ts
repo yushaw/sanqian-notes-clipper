@@ -85,6 +85,12 @@ export function getConnection(): Promise<NativeResponse> {
   return sendNative({ action: 'get_connection' }, 5_000);
 }
 
+// Ensure the app is reachable before a clip: launches it where supported and
+// waits for the bridge. Generous timeout to cover the host's launch+poll (~15s).
+export function ensureRunning(): Promise<NativeResponse> {
+  return sendNative({ action: 'ensure_running' }, 20_000);
+}
+
 export function callTool<T = unknown>(
   tool: string,
   args: Record<string, unknown>,

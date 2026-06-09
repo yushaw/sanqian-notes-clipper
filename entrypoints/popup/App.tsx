@@ -6,14 +6,17 @@ import type { Notebook, ListNotebooksResult } from '@/lib/notebooks';
 import type { ClipMode } from '@/lib/handlers/types';
 import { getClipJob, clearClipJob, clipJobKey, type ClipJob } from '@/lib/clip-jobs';
 
-type ConnState = 'checking' | 'connected' | 'not-running' | 'no-host';
+type ConnState = 'checking' | 'connected' | 'not-running' | 'not-installed' | 'no-host';
 
 const CONN_KEY = {
   checking: 'popup.conn.checking',
   connected: 'popup.conn.connected',
   'not-running': 'popup.conn.notRunning',
+  'not-installed': 'popup.conn.notInstalled',
   'no-host': 'popup.conn.noHost',
 } as const satisfies Record<ConnState, `popup.conn.${string}`>;
+
+const DOWNLOAD_URL = 'https://sanqian.ai/notes';
 
 const MODES = [
   { value: 'auto', labelKey: 'popup.mode.auto' },
@@ -36,15 +39,27 @@ export function App() {
   const [dispatching, setDispatching] = useState(false);
   const [status, setStatus] = useState('');
   const [connError, setConnError] = useState('');
+  // Platform decides whether "not running" can auto-launch (macOS only).
+  const [os, setOs] = useState<string>('');
+
+  useEffect(() => {
+    void browser.runtime
+      .getPlatformInfo()
+      .then((info) => setOs(info.os))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     void (async () => {
       const resp = (await browser.runtime.sendMessage({ type: 'CHECK_CONNECTION' })) as NativeResponse;
+      const code = resp && 'code' in resp ? resp.code : undefined;
       if (resp?.ok) {
         setConn('connected');
         await loadNotebooks();
-      } else if (resp && 'code' in resp && resp.code === 'NOT_RUNNING') {
+      } else if (code === 'NOT_RUNNING') {
         setConn('not-running');
+      } else if (code === 'NOT_INSTALLED') {
+        setConn('not-installed');
       } else {
         setConn('no-host');
         if (resp && 'error' in resp && resp.error) setConnError(resp.error);
@@ -114,9 +129,15 @@ export function App() {
   }
 
   const connected = conn === 'connected';
+  // Clipping is allowed when running, and also when installed-but-not-running:
+  // the background launches the app (macOS) or the user opens it, then clips.
+  const canClip = connected || conn === 'not-running';
   const running = dispatching || job?.state === 'running';
   const succeeded = !running && job?.state === 'succeeded';
   const failed = !running && job?.state === 'failed';
+  // macOS can auto-launch on click; elsewhere the user must open Notes first.
+  const clipLabel =
+    conn === 'not-running' && os === 'mac' ? i18n.t('popup.openAndClip') : i18n.t('popup.clip');
 
   return (
     <div className="clipper">
@@ -145,25 +166,36 @@ export function App() {
             className={`clipper__mode ${mode === m.value ? 'is-active' : ''}`}
             aria-pressed={mode === m.value}
             onClick={() => setMode(m.value)}
-            disabled={!connected}
+            disabled={!canClip}
           >
             {i18n.t(m.labelKey)}
           </button>
         ))}
       </div>
 
-      <button
-        className={`clipper__button ${succeeded ? 'is-saved' : ''}`}
-        onClick={clip}
-        onMouseEnter={acknowledge}
-        disabled={running || !connected}
-      >
-        {running
-          ? i18n.t('popup.clipping')
-          : succeeded
-            ? `${i18n.t('popup.status.saved')}: ${job?.title ?? i18n.t('popup.status.note')}`
-            : i18n.t('popup.clip')}
-      </button>
+      {conn === 'not-installed' ? (
+        <button className="clipper__button" onClick={() => void browser.tabs.create({ url: DOWNLOAD_URL })}>
+          {i18n.t('popup.download')}
+        </button>
+      ) : (
+        <button
+          className={`clipper__button ${succeeded ? 'is-saved' : ''}`}
+          onClick={clip}
+          onMouseEnter={acknowledge}
+          disabled={running || !canClip}
+        >
+          {running
+            ? i18n.t('popup.clipping')
+            : succeeded
+              ? `${i18n.t('popup.status.saved')}: ${job?.title ?? i18n.t('popup.status.note')}`
+              : clipLabel}
+        </button>
+      )}
+
+      {conn === 'not-installed' && <p className="clipper__status">{i18n.t('popup.hint.notInstalled')}</p>}
+      {conn === 'not-running' && os !== 'mac' && !running && (
+        <p className="clipper__status">{i18n.t('popup.hint.notRunning')}</p>
+      )}
 
       {conn === 'no-host' && connError && (
         <p className="clipper__status">

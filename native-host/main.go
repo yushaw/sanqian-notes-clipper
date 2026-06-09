@@ -23,12 +23,21 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"time"
 )
 
 const hostVersion = "0.0.1"
+
+// App identity (electron-builder.yml: appId / productName).
+const appBundleID = "com.sanqian.notes"
+const appProductName = "Sanqian Notes"
+
+// How long to wait for the app's MCP bridge to come up after we launch it.
+const launchTimeout = 15 * time.Second
+const launchPollInterval = 500 * time.Millisecond
 
 const maxMessageBytes = 1024 * 1024 // 1MB, matches Chrome native messaging + bridge body cap
 
@@ -202,6 +211,95 @@ func handleProxyTool(req *Request) Response {
 	return Response{OK: true, Result: parsed["result"]}
 }
 
+func pathExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// appInstalled reports whether the Sanqian Notes desktop app is present, so the
+// extension can tell "not running" (offer to launch / prompt to open) apart
+// from "not installed" (prompt to download).
+func appInstalled() bool {
+	home, _ := os.UserHomeDir()
+	switch runtime.GOOS {
+	case "darwin":
+		for _, p := range []string{
+			filepath.Join("/Applications", appProductName+".app"),
+			filepath.Join(home, "Applications", appProductName+".app"),
+		} {
+			if pathExists(p) {
+				return true
+			}
+		}
+		// Spotlight fallback covers non-standard install locations.
+		out, err := exec.Command("mdfind", "kMDItemCFBundleIdentifier == '"+appBundleID+"'").Output()
+		return err == nil && len(bytes.TrimSpace(out)) > 0
+	case "windows":
+		exe := appProductName + ".exe"
+		var candidates []string
+		if local := os.Getenv("LOCALAPPDATA"); local != "" {
+			candidates = append(candidates, filepath.Join(local, "Programs", appProductName, exe))
+		}
+		if pf := os.Getenv("ProgramFiles"); pf != "" {
+			candidates = append(candidates, filepath.Join(pf, appProductName, exe))
+		}
+		// Shortcuts are install-dir independent (NSIS shortcutName/desktop shortcut),
+		// so they detect installs that chose a custom directory.
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			candidates = append(candidates,
+				filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs", appProductName+".lnk"))
+		}
+		candidates = append(candidates, filepath.Join(home, "Desktop", appProductName+".lnk"))
+		for _, p := range candidates {
+			if pathExists(p) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+// launchApp starts the app detached from this one-shot host. Returns false when
+// no launch was attempted (unsupported platform). macOS only: Windows/Linux
+// have no reliable mechanism (matches the app's own MCP server), so there the
+// extension prompts the user to open it manually.
+func launchApp() bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
+	// `open` hands off to LaunchServices, so the app is not our child and
+	// survives our exit. -g keeps focus on the browser.
+	_ = exec.Command("open", "-b", appBundleID, "-g").Run()
+	return true
+}
+
+// handleEnsureRunning makes the app reachable for an imminent clip: it returns
+// running if the bridge is already up; otherwise launches the app (where
+// supported) and polls until the bridge answers or we time out. Called only for
+// an explicit clip, never for incidental probes, so opening the popup never
+// launches the app.
+func handleEnsureRunning() Response {
+	if _, err := loadConnection(); err == nil {
+		return Response{OK: true, Version: hostVersion, Status: "running"}
+	}
+	if !appInstalled() {
+		return Response{OK: false, Error: appProductName + " is not installed", Code: "NOT_INSTALLED", Status: "not_installed"}
+	}
+	if !launchApp() {
+		return Response{OK: false, Error: appProductName + " is not running", Code: "NOT_RUNNING", Status: "installed"}
+	}
+	deadline := time.Now().Add(launchTimeout)
+	for time.Now().Before(deadline) {
+		time.Sleep(launchPollInterval)
+		if _, err := loadConnection(); err == nil {
+			return Response{OK: true, Version: hostVersion, Status: "running"}
+		}
+	}
+	return Response{OK: false, Error: appProductName + " did not start in time", Code: "LAUNCH_TIMEOUT", Status: "installed"}
+}
+
 // readMessage reads one native-messaging frame: 4-byte little-endian length
 // prefix followed by a JSON body.
 func readMessage() (*Request, error) {
@@ -244,13 +342,20 @@ func main() {
 
 	switch req.Action {
 	case "get_connection":
-		// Availability probe only. Deliberately does NOT return the token to
-		// the browser; the token stays in this host for proxy_tool.
-		if _, err := loadConnection(); err != nil {
-			sendMessage(Response{OK: false, Error: "Sanqian Notes is not running", Code: "NOT_RUNNING"})
+		// Availability probe only -- never launches the app, and deliberately
+		// does NOT return the token to the browser (it stays here for proxy_tool).
+		// Distinguishes running / installed-not-running / not-installed.
+		if _, err := loadConnection(); err == nil {
+			sendMessage(Response{OK: true, Version: hostVersion, Status: "running"})
 			return
 		}
-		sendMessage(Response{OK: true, Version: hostVersion})
+		if appInstalled() {
+			sendMessage(Response{OK: false, Error: appProductName + " is not running", Code: "NOT_RUNNING", Status: "installed"})
+		} else {
+			sendMessage(Response{OK: false, Error: appProductName + " is not installed", Code: "NOT_INSTALLED", Status: "not_installed"})
+		}
+	case "ensure_running":
+		sendMessage(handleEnsureRunning())
 	case "proxy_tool":
 		sendMessage(handleProxyTool(req))
 	case "ping":
@@ -258,7 +363,7 @@ func main() {
 			OK:           true,
 			Status:       "ok",
 			Version:      hostVersion,
-			Capabilities: []string{"get_connection", "proxy_tool", "ping"},
+			Capabilities: []string{"get_connection", "ensure_running", "proxy_tool", "ping"},
 		})
 	default:
 		sendMessage(Response{OK: false, Error: "Unknown action: " + req.Action, Code: "UNKNOWN_ACTION"})

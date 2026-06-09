@@ -203,3 +203,37 @@ two different Layer-1 image resolvers (Defuddle vs ours) that could drift;
 `isPlaceholderSrc` can false-positive on filenames containing "transparent"
 etc.; the per-tab dedup has a benign TOCTOU window (irrelevant for single-user
 clicking); `upgradeImageUrl` is wired to images only, not `<video>`/`<audio>`.
+
+### Notes install/run detection + macOS auto-launch (2026-06-09)
+
+Clipping now copes with Notes being absent or not running, so the user isn't
+stuck at a dead "Connected" check. Three states drive three behaviours:
+not installed → prompt to download; installed but not running → launch it
+(macOS) or prompt to open it (Windows), then clip; running → clip directly.
+
+- Native host (`native-host/main.go`): `appInstalled()` locates the app
+  (macOS `/Applications` + `~/Applications`, `mdfind` fallback; Windows known
+  Program dirs + the install-dir-independent Start-menu/desktop shortcut), so
+  "not running" and "not installed" are distinguishable. New `ensure_running`
+  action: returns running, else launches (macOS `open -b com.sanqian.notes -g`,
+  detached via LaunchServices so it outlives this one-shot host) and polls the
+  bridge up to 15s, else reports `NOT_RUNNING`/`NOT_INSTALLED`. `get_connection`
+  now reports running / installed / not-installed (probe only, never launches —
+  opening the popup must not start the app). Windows/Linux do not auto-launch
+  (no reliable mechanism — matches the app's own MCP server); they prompt the
+  user to open it.
+- `lib/native.ts`: `ensureRunning()` (20s timeout to cover the host's launch
+  poll). `entrypoints/background.ts`: `handleClip` calls it first inside the
+  keepalive, before extracting, and aborts with the reason on failure. An
+  `UNKNOWN_ACTION` reply (older host that predates `ensure_running`) is treated
+  as "skip the gate and clip anyway", so an extension update ahead of an app
+  update does not break every clip.
+- `entrypoints/popup/App.tsx`: four-state connection (adds `not-installed`);
+  reads `runtime.getPlatformInfo()` so only macOS shows "Open Notes & Clip"
+  (auto-launch) while other platforms show a "open Notes first" hint; a
+  not-installed state shows a Download button → https://sanqian.ai/notes.
+- Deploy note: the Go host source lives here but ships as prebuilt binaries in
+  the Notes app's `resources/native-host/`. After changing `main.go`, run
+  `native-host/build.sh` (cross-compiles all platforms to `native-host/bin/`,
+  gitignored) and sync those into the Notes repo's resources; native-host
+  registration is production-only (`is.dev` returns early).
