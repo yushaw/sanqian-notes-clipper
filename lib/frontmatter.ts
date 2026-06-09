@@ -21,6 +21,8 @@ export function buildFrontmatter(fm: ClipFrontmatter, clippedAt: string): string
   if (fm.author) lines.push(`author: ${yamlScalar(fm.author)}`);
   if (fm.published) lines.push(`published: ${yamlScalar(fm.published)}`);
   if (fm.description) lines.push(`description: ${yamlScalar(fm.description)}`);
+  if (fm.fallback) lines.push(`fallback: ${yamlScalar(fm.fallback)}`);
+  if (fm.fallbackReason) lines.push(`fallback_reason: ${yamlScalar(fm.fallbackReason)}`);
   lines.push(`clipped: ${clippedAt}`, `clipper: ${CLIPPER_ID}`, `tags: [${CLIPPED_TAG}]`, '---', '');
   return lines.join('\n');
 }

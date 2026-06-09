@@ -291,14 +291,23 @@ async function doClip(req: ClipRequest, tabId: number): Promise<NativeResponse<C
     // Hand off to a notes-side importer (e.g. import_arxiv). If the tool is not
     // available yet, or the import fails, fall back to a generic article clip
     // of the same page (design §7.2).
-    const delegated = await callTool<CreateNoteResult>(payload.tool, {
+    const { tool } = payload;
+    const delegated = await callTool<CreateNoteResult>(tool, {
       ...payload.args,
       notebook_id: req.notebookId,
     });
     if (delegated.ok) {
       return delegated;
     }
+    // Record the degradation in the fallback note's frontmatter so it is visible
+    // (delegated import failures are usually transient — the note can be
+    // re-imported for the richer specialized result).
+    const reason = ('error' in delegated && delegated.error) || 'unknown error';
     payload = await extract(tabId, 'article');
+    if (payload.kind === 'markdown') {
+      payload.frontmatter.fallback = `${tool}-failed`;
+      payload.frontmatter.fallbackReason = reason;
+    }
   }
 
   if (payload.kind === 'error') {

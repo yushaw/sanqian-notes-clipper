@@ -17,6 +17,13 @@ export interface ClipFrontmatter {
   author?: string;
   published?: string;
   description?: string;
+  // Set when a delegated importer (e.g. import_arxiv) was attempted but failed
+  // and we fell back to generic article extraction. Recorded in the note's
+  // frontmatter so the degradation is visible and the user can re-import for a
+  // richer result. `fallback` is a machine code (`<tool>-failed`);
+  // `fallbackReason` carries the underlying error for diagnosis.
+  fallback?: string;
+  fallbackReason?: string;
 }
 
 export interface MarkdownPayload {
