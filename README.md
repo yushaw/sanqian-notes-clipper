@@ -116,3 +116,90 @@ Extension-side milestones built; notes repo still untouched.
   (`save_attachment`) — mitigated because Notes localizes remote images on open;
   real arxiv structured import (`import_arxiv`); production host auto-registration.
   Highlight-collection UX is a later sub-task on top of selection mode.
+
+### Higher-resolution image capture (2026-06-09)
+
+Images clipped from sites that serve downscaled thumbnails (Wikipedia being the
+motivating case — its article `<img>`s are 250px `/thumb/` variants) now reach
+for the full-resolution original. Two-layer design, chosen for long-term
+maintainability over per-site hacks (mirrors the yt-dlp/Imagus "generic
+resolution + declarative CDN registry" pattern):
+
+- General resolution. Article mode already gets this from Defuddle (largest
+  srcset candidate, noscript/lazy fallbacks, dedup-by-resolution). Selection
+  mode previously dropped `srcset` wholesale before Turndown, keeping only the
+  (often placeholder) `src`; `resolveResponsiveImages()` in `lib/extract/chain.ts`
+  now picks the largest `srcset`/`<picture>` candidate, or a `data-src` lazy URL
+  when `src` is a placeholder, before Markdown conversion.
+- CDN original upgrade (`lib/extract/image-cdn.ts`). A declarative rule table
+  maps a known CDN's thumbnail URL to its original; `upgradeImageUrl()` applies
+  the first matching rule or returns the URL unchanged. Ships with one rule —
+  Wikimedia: strip `/thumb/` + the trailing `NNNpx-` variant, which also recovers
+  `.svg` vector originals (verified to render inline in Notes). Adding a CDN is
+  one table entry; a remote-refreshable table is a deliberate later option, not
+  built yet.
+- Fallback chain in `imageReplacement` (`entrypoints/background.ts`): fetch the
+  upgraded original, fall back to the in-page URL, and if every candidate fails
+  keep the remote `![](url)` rather than silently dropping the image (Wikimedia
+  refuses raster upscaling with a 400, so blindly requesting a larger thumbnail
+  is not viable — only the true original is).
+- Tests: `lib/extract/image-cdn.test.ts` covers Wikimedia raster/SVG upgrades,
+  already-original and unknown-host passthrough, and data:/relative URLs.
+
+### Durable clip jobs (2026-06-09)
+
+Clip progress/result used to live only in the popup's React state, so closing
+the popup mid-clip lost all feedback and a reopen could trigger a duplicate
+clip of the same page. The state of record now lives where the work runs.
+
+- `lib/clip-jobs.ts`: per-tab clip job (`running`/`succeeded`/`failed`) stored in
+  `storage.session` — survives popup close/reopen and service-worker eviction
+  (in-memory across SW restarts, never on disk), and drives the popup reactively
+  via `storage.onChanged` (no polling). `runClipJob()` dedups: a fresh running
+  job for a tab is returned instead of starting a second clip, so no duplicate
+  notes. TTLs treat a running record older than 5 min as stale (MV3 caps worker
+  lifetime, so it can only be a dead job) and let a finished record linger 5 min
+  (from completion) so a reopened popup still shows the outcome.
+- `entrypoints/background.ts`: `handleClip` splits into `doClip` (the work) +
+  `runClipJob` wrapper; awaiting the job keeps the worker alive for the whole
+  clip even after the popup closes (pending-handler-promise keepalive, not a
+  detached promise). Tab `onRemoved`/`onUpdated`(url) listeners clear the job so
+  a reopened popup never shows a stale "Saved" for a closed/navigated page.
+- `entrypoints/popup/App.tsx`: now a pure subscriber — resolves the active tab,
+  reads its job on mount, and listens to `storage.onChanged`. The button mirrors
+  the job (`Clipping…` / `Saved: <title>` / normal with a `Failed: …` line);
+  re-hover acknowledges a finished job (clears the record) and re-arms the button.
+- Tests: `lib/clip-jobs.test.ts` covers succeeded/failed/throw recording, dedup
+  against a running job, stale-running restart, terminal-TTL expiry, and clear.
+
+### Review follow-ups (2026-06-09)
+
+A long-term review of the above turned up three real issues, now fixed:
+
+- Service-worker keepalive (`withKeepalive` in `entrypoints/background.ts`). MV3
+  terminates an idle worker after ~30s of no extension-API activity; a large
+  original-image download (a bare `fetch`) can sit in that gap and be killed
+  mid-clip. While a clip runs we now ping `runtime.getPlatformInfo` every 25s to
+  reset the idle timer. The separate ~5-min hard lifetime cap can't be extended
+  (a documented MV3 limit); a clip that exceeds it is abandoned and its stale
+  `running` record is reclaimed by `RUNNING_TTL_MS`, so the user can retry. (A
+  prior comment claiming an awaited handler promise keeps the worker alive was
+  wrong and has been corrected.)
+- Per-URL image dedup (`localizeMedia`). Localization mapped each `![](…)`
+  occurrence independently, so an image used twice was downloaded, uploaded, and
+  stored as a duplicate attachment twice — worse now that originals are larger.
+  `imageReplacement` is split into a memoizable per-URL `localizeImageUrl` +
+  alt-only `formatImage`; `localizeMedia` resolves through a per-clip cache so a
+  repeated image is fetched/uploaded once.
+- Robust srcset parsing (`lib/extract/srcset.ts`). `largestSrcsetUrl` used
+  `split(',')`, which corrupts URLs containing commas (e.g. `data:` URIs); it is
+  now a spec-shaped tokenizer (URL up to whitespace, descriptor up to comma),
+  extracted to a DOM-free module with unit tests (`srcset.test.ts`).
+
+Deferred (noted so they aren't rediscovered): clips silently drop/keep-remote
+failed images with no surfaced count (observability); article vs selection use
+two different Layer-1 image resolvers (Defuddle vs ours) that could drift;
+`image-cdn.ts` lives under `extract/` though it's a localization concern;
+`isPlaceholderSrc` can false-positive on filenames containing "transparent"
+etc.; the per-tab dedup has a benign TOCTOU window (irrelevant for single-user
+clicking); `upgradeImageUrl` is wired to images only, not `<video>`/`<audio>`.

@@ -9,6 +9,7 @@ import type { ClipMode, ClipPayload } from '@/lib/handlers/types';
 import { isArxivUrl } from './arxiv';
 import { htmlFragmentToMarkdown } from './turndown';
 import { normalizeBlockMath } from './normalize-block-math';
+import { largestSrcsetUrl, isPlaceholderSrc } from './srcset';
 
 export async function runChain(mode: ClipMode): Promise<ClipPayload> {
   const url = location.href;
@@ -44,6 +45,31 @@ async function extractArticle(url: string): Promise<ClipPayload> {
   };
 }
 
+// Selections carry no <base> and bypass Defuddle's image handling, so resolve
+// responsive/lazy-loaded images to the best candidate the page references
+// before converting to Markdown: prefer the largest srcset candidate (from the
+// <img> or its <picture> sources), else a lazy-load data-src when the visible
+// src is just a placeholder. Then drop srcset so absolutize/Turndown use src.
+function resolveResponsiveImages(root: HTMLElement): void {
+  root.querySelectorAll('img').forEach((img) => {
+    const srcset =
+      img.getAttribute('srcset') ||
+      img.getAttribute('data-srcset') ||
+      img.closest('picture')?.querySelector('source[srcset]')?.getAttribute('srcset') ||
+      '';
+    const lazy = img.getAttribute('data-src') || img.getAttribute('data-original');
+
+    let chosen = srcset ? largestSrcsetUrl(srcset) : null;
+    if (!chosen && lazy && isPlaceholderSrc(img.getAttribute('src') || '')) {
+      chosen = lazy;
+    }
+    if (chosen) img.setAttribute('src', chosen);
+    img.removeAttribute('srcset');
+    img.removeAttribute('sizes');
+  });
+  root.querySelectorAll('source[srcset]').forEach((el) => el.removeAttribute('srcset'));
+}
+
 // Resolve relative src/href in a cloned fragment to absolute URLs (selections
 // carry no <base>, so relative image/link URLs would otherwise break / not
 // localize).
@@ -58,7 +84,6 @@ function absolutizeUrls(root: HTMLElement): void {
     }
   };
   root.querySelectorAll('[src]').forEach((el) => fix(el, 'src'));
-  root.querySelectorAll('source[srcset]').forEach((el) => el.removeAttribute('srcset'));
   root.querySelectorAll('a[href]').forEach((el) => fix(el, 'href'));
 }
 
@@ -86,6 +111,7 @@ function extractSelection(url: string): ClipPayload {
   for (let i = 0; i < selection.rangeCount; i++) {
     container.appendChild(selection.getRangeAt(i).cloneContents());
   }
+  resolveResponsiveImages(container);
   absolutizeUrls(container);
 
   const body = normalizeBlockMath(htmlFragmentToMarkdown(container.innerHTML).trim());

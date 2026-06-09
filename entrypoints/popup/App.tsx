@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { browser } from 'wxt/browser';
 import { i18n } from '#i18n';
 import type { NativeResponse } from '@/lib/native';
-import type { CreateNoteResult } from '@/lib/clip';
 import type { Notebook, ListNotebooksResult } from '@/lib/notebooks';
 import type { ClipMode } from '@/lib/handlers/types';
+import { getClipJob, clearClipJob, clipJobKey, type ClipJob } from '@/lib/clip-jobs';
 
 type ConnState = 'checking' | 'connected' | 'not-running' | 'no-host';
 
@@ -28,7 +28,12 @@ export function App() {
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [notebookId, setNotebookId] = useState<string>('');
   const [mode, setMode] = useState<ClipMode>('auto');
-  const [busy, setBusy] = useState(false);
+  // The clip job is the source of truth (in storage.session, owned by the
+  // background); the popup only mirrors it. `dispatching` covers the brief
+  // window between the click and the job record flipping to 'running'.
+  const [tabId, setTabId] = useState<number | null>(null);
+  const [job, setJob] = useState<ClipJob | null>(null);
+  const [dispatching, setDispatching] = useState(false);
   const [status, setStatus] = useState('');
   const [connError, setConnError] = useState('');
 
@@ -47,6 +52,30 @@ export function App() {
     })();
   }, []);
 
+  // Resolve the active tab and load any existing clip job for it (so a clip
+  // started in a previous popup session is still reflected on reopen).
+  useEffect(() => {
+    void (async () => {
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id == null) return;
+      setTabId(tab.id);
+      setJob(await getClipJob(tab.id));
+    })();
+  }, []);
+
+  // Subscribe to the tab's job record so progress/result update live, even when
+  // the running clip was started by a different (now-closed) popup session.
+  useEffect(() => {
+    if (tabId == null) return;
+    const key = clipJobKey(tabId);
+    const onChanged = (changes: Record<string, { newValue?: unknown }>, area: string): void => {
+      if (area !== 'session' || !(key in changes)) return;
+      setJob((changes[key].newValue as ClipJob | undefined) ?? null);
+    };
+    browser.storage.onChanged.addListener(onChanged);
+    return () => browser.storage.onChanged.removeListener(onChanged);
+  }, [tabId]);
+
   async function loadNotebooks(): Promise<void> {
     const result = (await browser.runtime.sendMessage({ type: 'LIST_NOTEBOOKS' })) as ListNotebooksResult;
     const writable = (result?.notebooks ?? []).filter((n) => n.writable);
@@ -62,30 +91,32 @@ export function App() {
   }
 
   async function clip(): Promise<void> {
-    setBusy(true);
     setStatus('');
+    setDispatching(true);
     try {
       await browser.storage.local.set({ [LAST_NOTEBOOK_KEY]: notebookId });
-      const resp = (await browser.runtime.sendMessage({
-        type: 'CLIP',
-        mode,
-        notebookId: notebookId || undefined,
-      })) as NativeResponse<CreateNoteResult>;
-
-      if (resp?.ok) {
-        setStatus(`${i18n.t('popup.status.saved')}: ${resp.result?.title ?? i18n.t('popup.status.note')}`);
-      } else {
-        const detail = (resp && 'error' in resp && resp.error) || i18n.t('popup.status.unknownError');
-        setStatus(`${i18n.t('popup.status.failed')}: ${detail}`);
-      }
+      // Fire the clip. Its progress and result are reflected through the job
+      // record (storage.onChanged), so it completes correctly even if the popup
+      // is closed mid-clip; the response here is only a courtesy for this view.
+      await browser.runtime.sendMessage({ type: 'CLIP', mode, notebookId: notebookId || undefined });
     } catch (e) {
       setStatus(`${i18n.t('popup.status.error')}: ${String(e)}`);
     } finally {
-      setBusy(false);
+      setDispatching(false);
     }
   }
 
+  // Re-hovering the button acknowledges a finished clip, reverting to "Clip".
+  function acknowledge(): void {
+    if (tabId == null || job == null || job.state === 'running') return;
+    setJob(null);
+    void clearClipJob(tabId);
+  }
+
   const connected = conn === 'connected';
+  const running = dispatching || job?.state === 'running';
+  const succeeded = !running && job?.state === 'succeeded';
+  const failed = !running && job?.state === 'failed';
 
   return (
     <div className="clipper">
@@ -121,13 +152,27 @@ export function App() {
         ))}
       </div>
 
-      <button className="clipper__button" onClick={clip} disabled={busy || !connected}>
-        {busy ? i18n.t('popup.clipping') : i18n.t('popup.clip')}
+      <button
+        className={`clipper__button ${succeeded ? 'is-saved' : ''}`}
+        onClick={clip}
+        onMouseEnter={acknowledge}
+        disabled={running || !connected}
+      >
+        {running
+          ? i18n.t('popup.clipping')
+          : succeeded
+            ? `${i18n.t('popup.status.saved')}: ${job?.title ?? i18n.t('popup.status.note')}`
+            : i18n.t('popup.clip')}
       </button>
 
       {conn === 'no-host' && connError && (
         <p className="clipper__status">
           {i18n.t('popup.status.hostError')}: {connError}
+        </p>
+      )}
+      {failed && (
+        <p className="clipper__status">
+          {i18n.t('popup.status.failed')}: {job?.error ?? i18n.t('popup.status.unknownError')}
         </p>
       )}
       {status && <p className="clipper__status">{status}</p>}

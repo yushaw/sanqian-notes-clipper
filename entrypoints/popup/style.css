@@ -101,11 +101,18 @@ body {
   color: #fff;
   background: #1a73e8;
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .clipper__button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.clipper__button.is-saved {
+  background: #137333;
 }
 
 .clipper__status {

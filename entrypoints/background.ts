@@ -5,6 +5,8 @@ import { buildNoteContent } from '@/lib/frontmatter';
 import type { CreateNoteResult } from '@/lib/clip';
 import type { ClipMode, ClipPayload } from '@/lib/handlers/types';
 import type { ClipRequest, ExtractRequest, PopupRequest } from '@/lib/messages';
+import { upgradeImageUrl } from '@/lib/extract/image-cdn';
+import { runClipJob, clearClipJob } from '@/lib/clip-jobs';
 
 const EXTRACTOR_FILE = 'content-scripts/extractor.js';
 
@@ -172,41 +174,75 @@ async function mediaTagReplacement(block: string, rawTag: string): Promise<strin
   return `[${tag === 'video' ? 'Video' : 'Audio'}](${src})`;
 }
 
-// One ![](...) -> localized attachment image, embed iframe, dropped, or untouched.
-async function imageReplacement(alt: string, rawUrl: string): Promise<string | null> {
-  const url = unwrapUrl(rawUrl);
+// How one image URL resolves, independent of any alt text. Computed once per
+// unique URL (see localizeMedia's cache) so a repeated image is fetched and
+// uploaded a single time rather than once per occurrence.
+type ImageResult =
+  | { kind: 'embed'; html: string }
+  | { kind: 'replace'; url: string } // attachment:// (localized) or kept-remote
+  | { kind: 'drop' }
+  | { kind: 'untouched' };
 
+async function localizeImageUrl(url: string): Promise<ImageResult> {
   const embed = toEmbedIframe(url);
-  if (embed) return `\n\n${embed}\n\n`;
+  if (embed) return { kind: 'embed', html: embed };
 
-  let bytes: Uint8Array | undefined;
-  let mime: string | undefined;
-
+  // data: URI -> decode + upload. There is no remote to fall back to, so a
+  // decode/upload failure drops it.
   const dataMatch = DATA_IMAGE_RE.exec(url);
   if (dataMatch) {
-    mime = dataMatch[1];
+    let bytes: Uint8Array | undefined;
     try {
       bytes = Uint8Array.from(atob(dataMatch[2]), (c) => c.charCodeAt(0));
     } catch {
-      bytes = undefined;
+      return { kind: 'drop' };
     }
-  } else if (/^https?:\/\//i.test(url)) {
-    const fetched = await fetchBinary(url);
-    if (fetched && fetched.mime.startsWith('image/')) {
-      bytes = fetched.bytes;
-      mime = fetched.mime;
-    }
-  } else {
-    return null; // relative/unknown scheme: leave untouched
+    const localized = await uploadBinary(bytes, dataMatch[1], filenameFromUrl(url));
+    return localized ? { kind: 'replace', url: localized } : { kind: 'drop' };
   }
 
-  if (!bytes || !mime) return ''; // non-image / failed -> drop
-  const localized = await uploadBinary(bytes, mime, filenameFromUrl(url));
-  return localized ? `![${alt}](${localized})` : '';
+  // Remote image: try the CDN-upgraded original first, then the in-page URL.
+  // If every candidate fails to download/upload, keep the remote URL rather
+  // than dropping the image.
+  if (/^https?:\/\//i.test(url)) {
+    const upgraded = upgradeImageUrl(url);
+    const candidates = upgraded !== url ? [upgraded, url] : [url];
+    for (const candidate of candidates) {
+      const fetched = await fetchBinary(candidate);
+      if (fetched && fetched.mime.startsWith('image/')) {
+        const localized = await uploadBinary(fetched.bytes, fetched.mime, filenameFromUrl(candidate));
+        if (localized) return { kind: 'replace', url: localized };
+      }
+    }
+    return { kind: 'replace', url };
+  }
+
+  return { kind: 'untouched' }; // relative/unknown scheme: leave alone
+}
+
+// Render one ![alt](...) occurrence from its resolved image. null leaves the
+// match untouched; '' drops it.
+function formatImage(alt: string, result: ImageResult): string | null {
+  switch (result.kind) {
+    case 'embed':
+      return `\n\n${result.html}\n\n`;
+    case 'replace':
+      return `![${alt}](${result.url})`;
+    case 'drop':
+      return '';
+    case 'untouched':
+      return null;
+    default: {
+      // Exhaustiveness guard: a new ImageResult kind must be handled here.
+      const _exhaustive: never = result;
+      return _exhaustive;
+    }
+  }
 }
 
 // Localize all media: <video>/<audio> tags first, then ![](...) images/embeds.
 // Each pass computes replacements concurrently (bounded), then applies them.
+// Images are resolved through a per-URL cache so duplicates download/upload once.
 async function localizeMedia(markdown: string): Promise<string> {
   const tagMatches = [...markdown.matchAll(MEDIA_TAG_RE)];
   const tagOps = await mapPool(tagMatches, LOCALIZE_CONCURRENCY, async (m) => ({
@@ -215,10 +251,21 @@ async function localizeMedia(markdown: string): Promise<string> {
   }));
   let result = applyReplacements(markdown, tagOps);
 
+  const cache = new Map<string, Promise<ImageResult>>();
+  const localize = (rawUrl: string): Promise<ImageResult> => {
+    const key = unwrapUrl(rawUrl);
+    let pending = cache.get(key);
+    if (!pending) {
+      pending = localizeImageUrl(key);
+      cache.set(key, pending);
+    }
+    return pending;
+  };
+
   const imgMatches = [...result.matchAll(IMAGE_RE)];
   const imgOps = await mapPool(imgMatches, LOCALIZE_CONCURRENCY, async (m) => ({
     full: m[0],
-    value: await imageReplacement(m[1], m[2]),
+    value: formatImage(m[1], await localize(m[2])),
   }));
   return applyReplacements(result, imgOps);
 }
@@ -236,13 +283,9 @@ async function createNoteFromPayload(
   return callTool<CreateNoteResult>('create_note', args);
 }
 
-async function handleClip(req: ClipRequest): Promise<NativeResponse<CreateNoteResult>> {
-  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) {
-    return { ok: false, error: 'No active tab', code: 'NO_TAB' };
-  }
-
-  let payload = await extract(tab.id, req.mode);
+// The clip itself, against a known tab. Wrapped by handleClip in a durable job.
+async function doClip(req: ClipRequest, tabId: number): Promise<NativeResponse<CreateNoteResult>> {
+  let payload = await extract(tabId, req.mode);
 
   if (payload.kind === 'delegate') {
     // Hand off to a notes-side importer (e.g. import_arxiv). If the tool is not
@@ -255,7 +298,7 @@ async function handleClip(req: ClipRequest): Promise<NativeResponse<CreateNoteRe
     if (delegated.ok) {
       return delegated;
     }
-    payload = await extract(tab.id, 'article');
+    payload = await extract(tabId, 'article');
   }
 
   if (payload.kind === 'error') {
@@ -265,6 +308,50 @@ async function handleClip(req: ClipRequest): Promise<NativeResponse<CreateNoteRe
     return { ok: false, error: 'Extraction produced no content', code: 'EMPTY' };
   }
   return createNoteFromPayload(payload, req.notebookId);
+}
+
+// MV3 terminates the service worker after ~30s with no extension-API activity,
+// and a long image download (a plain fetch, no API call in between) can fall in
+// that gap and be killed mid-clip. Ping a trivial API periodically while a clip
+// runs to keep resetting the idle timer. (The separate ~5-minute hard cap on
+// worker lifetime cannot be extended; a clip that exceeds it is abandoned and
+// its stale 'running' record is reclaimed by RUNNING_TTL_MS so the user can
+// retry — see clip-jobs.ts.)
+const KEEPALIVE_INTERVAL_MS = 25_000;
+async function withKeepalive<T>(fn: () => Promise<T>): Promise<T> {
+  const timer = setInterval(() => {
+    void browser.runtime.getPlatformInfo().catch(() => {});
+  }, KEEPALIVE_INTERVAL_MS);
+  try {
+    return await fn();
+  } finally {
+    clearInterval(timer);
+  }
+}
+
+async function handleClip(req: ClipRequest): Promise<NativeResponse<CreateNoteResult>> {
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) {
+    return { ok: false, error: 'No active tab', code: 'NO_TAB' };
+  }
+  const tabId = tab.id;
+
+  // Run as a durable, deduped per-tab job, kept alive against idle termination.
+  let response: NativeResponse<CreateNoteResult> | null = null;
+  await runClipJob(tabId, () =>
+    withKeepalive(async () => {
+      const resp = await doClip(req, tabId);
+      response = resp;
+      return resp.ok
+        ? { ok: true, title: resp.result?.title }
+        : { ok: false, error: ('error' in resp && resp.error) || 'Unknown error' };
+    }),
+  );
+
+  // response is null only when the job deduped against an in-flight clip.
+  return (
+    response ?? { ok: false, error: 'A clip is already in progress for this tab', code: 'ALREADY_RUNNING' }
+  );
 }
 
 export default defineBackground(() => {
@@ -281,5 +368,13 @@ export default defineBackground(() => {
       default:
         return undefined;
     }
+  });
+
+  // A clip job belongs to the page that was open when it ran. Drop it when the
+  // tab is closed or navigates to a new URL, so a reopened popup never shows a
+  // stale "Saved" for a page that is no longer there.
+  browser.tabs.onRemoved.addListener((tabId) => void clearClipJob(tabId));
+  browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.url) void clearClipJob(tabId);
   });
 });
