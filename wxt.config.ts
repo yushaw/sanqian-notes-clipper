@@ -13,6 +13,10 @@ export default defineConfig({
     // activeTab/scripting: read the current page on user action.
     // storage: remember the chosen notebook (later milestones).
     permissions: ['nativeMessaging', 'activeTab', 'scripting', 'storage'],
+    // WeChat article images live on mmbiz.qpic.cn, which only answers CORS
+    // for qq-family origins — without this host permission the background
+    // worker cannot read the image bytes to localize them (design §7.6).
+    host_permissions: ['https://mmbiz.qpic.cn/*'],
     icons: {
       16: 'icon/16.png',
       32: 'icon/32.png',

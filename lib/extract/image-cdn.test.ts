@@ -28,6 +28,30 @@ describe('upgradeImageUrl', () => {
     });
   });
 
+  describe('WeChat mmbiz', () => {
+    it('swaps the size cap for /0 and drops tp=webp', () => {
+      expect(
+        upgradeImageUrl('https://mmbiz.qpic.cn/sz_mmbiz_gif/abcDEF123/640?wx_fmt=gif&from=appmsg&tp=webp'),
+      ).toBe('https://mmbiz.qpic.cn/sz_mmbiz_gif/abcDEF123/0?wx_fmt=gif&from=appmsg');
+    });
+
+    it('leaves an already-original /0 URL unchanged', () => {
+      const original = 'https://mmbiz.qpic.cn/mmbiz_png/abc/0?wx_fmt=png';
+      expect(upgradeImageUrl(original)).toBe(original);
+    });
+
+    it('drops tp=webp even when the size is already /0', () => {
+      expect(upgradeImageUrl('https://mmbiz.qpic.cn/mmbiz_png/abc/0?wx_fmt=png&tp=webp')).toBe(
+        'https://mmbiz.qpic.cn/mmbiz_png/abc/0?wx_fmt=png',
+      );
+    });
+
+    it('leaves non-numeric trailing segments alone', () => {
+      const odd = 'https://mmbiz.qpic.cn/mmbiz_png/abc/cover.png?wx_fmt=png';
+      expect(upgradeImageUrl(odd)).toBe(odd);
+    });
+  });
+
   it('passes through URLs from unknown hosts', () => {
     const other = 'https://example.com/images/thumb/a/b/photo.jpg/250px-photo.jpg';
     expect(upgradeImageUrl(other)).toBe(other);

@@ -37,6 +37,28 @@ const RULES: CdnRule[] = [
       return u.href;
     },
   },
+
+  // WeChat article CDN (mmbiz.qpic.cn). The last path segment is a size cap:
+  //   /mmbiz_jpg/<id>/640?wx_fmt=jpeg  (also /300 etc.); /0 is the original.
+  // Arbitrary other values (e.g. /1000) answer an empty body, so only swap a
+  // known numeric cap for 0. Also drop tp=webp so the download keeps the
+  // source format (wx_fmt) instead of a webp transcode.
+  {
+    host: /(^|\.)mmbiz\.qpic\.cn$/i,
+    upgrade(u) {
+      let changed = false;
+      const m = /^(.*\/)(\d+)\/?$/.exec(u.pathname);
+      if (m && m[2] !== '0') {
+        u.pathname = `${m[1]}0`;
+        changed = true;
+      }
+      if (u.searchParams.get('tp') === 'webp') {
+        u.searchParams.delete('tp');
+        changed = true;
+      }
+      return changed ? u.href : null;
+    },
+  },
 ];
 
 // Upgrade a remote image URL to its original via a known-CDN rule, or return it
