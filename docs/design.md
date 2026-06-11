@@ -190,7 +190,14 @@ PDF URL 在学术/资料场景很常见，但 notes 现有 PDF importer 有三�
 - C.（一期采用）暂不处理 PDF，遇到 PDF URL 提示用户走 notes 内的「导入 PDF」。
 
 ### 7.4 后续可加的 handler（占位）
-X/Twitter（长推串展开）、GitHub（README/代码）、微信公众号（防盗链图）。均以新 `ClipHandler` 插入链中，不改主流程。YouTube/B 站已落地，见 §7.5。
+X/Twitter（长推串展开，调研已完成，见下）、GitHub（README/代码）。均以新 handler 插入链中，不改主流程。YouTube/B 站已落地（§7.5），微信公众号已落地（§7.6）。
+
+**X/Twitter 调研结论（2026-06-11，暂缓实施）**：
+- 路线：DOM 抽取（X 自家测试用的 `data-testid` 选择器：`article[data-testid="tweet"]`/`tweetText`/`User-Name`/`cellInnerDiv`，多年未变，业界公认首选）。GraphQL 拦截数据全但脆，不做；官方 API $200/月起，放弃；登录墙对 content script 路线无影响。
+- thread 判定照搬 Defuddle twitter extractor 的算法：主推 handle 为锚、连续自回复 = thread 正文、异 handle 截断；各条用 `---` 拼接、每条带自身 permalink；引用推 blockquote 嵌套；图片 `name=small`→`name=large` 走现有本地化管线；emoji `<img>` 还原为 alt 字符。
+- 关键差异化机会：X 虚拟滚动会卸载滚出视口的推文，Defuddle 一次性读 DOM 只能剪到已渲染几条（obsidian-clipper#264 未修）——解法是剪藏时程序化滚动 + 按推文 id 边滚边收割（Tweet Copier 等竞品的标准做法）。
+- 视频推文 DOM 只有 blob: URL；补救是免登录 syndication API（`cdn.syndication.twimg.com/tweet-result?id=&token=`，token=`(id/1e15*π).toString(36)` 去零点；能拿 mp4 直链），但需新增 host 权限且属未文档化接口——一期降级为封面图+原链接，syndication 留二期。X Articles（长文）DOM 结构完全不同，业界普遍没做好，一期不做。
+- 参考：kepano/defuddle `src/extractors/twitter.ts`、obsidian-clipper#264、prinsss/twitter-web-exporter、shkspr.mobi 2025-04 syndication 分析。
 
 ### 7.5 视频 handler（YouTube / Bilibili，2026-06-11 落地）
 
