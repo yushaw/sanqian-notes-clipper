@@ -237,3 +237,177 @@ not installed → prompt to download; installed but not running → launch it
   `native-host/build.sh` (cross-compiles all platforms to `native-host/bin/`,
   gitignored) and sync those into the Notes repo's resources; native-host
   registration is production-only (`is.dev` returns early).
+
+### Video clip handlers — YouTube + Bilibili transcripts (2026-06-11)
+
+Clipping a YouTube/Bilibili video page now produces a video note — embed
+player + metadata + description + the full transcript organized by chapters,
+every paragraph deep-linking back into the video (`&t=` / `?t=`) — instead of
+the generic-extraction junk those pages used to yield. Design §7.5; the core
+value is the transcript being searchable in Notes.
+
+- Long-term architecture (`lib/extract/video/`): platform providers
+  (`youtube.ts`, `bilibili.ts`) fill a platform-neutral `VideoClip` model
+  (`types.ts`); `transcript.ts` merges caption cues into timestamped
+  paragraphs (chapter/gap/length breaks, CJK-aware joining); `render.ts`
+  defines the note format once for all platforms. Adding a platform = one
+  provider + one branch in `index.ts`.
+- Fetch-first, no DOM scraping (industry research, design §7.5.6): YouTube
+  re-fetches the watch page HTML and brace-scans `ytInitialPlayerResponse`
+  (fresh data, immune to SPA-stale page globals; captions via
+  `timedtext&fmt=json3`, manual over asr, lang pref navigator→zh→en; chapters
+  parsed from description timestamp lines with YouTube's own validity rules).
+  Bilibili uses `x/web-interface/view` (meta + per-part cid) and
+  `x/player/wbi/v2` (subtitles + view_points chapters in one call, verified
+  unsigned in-browser 2026-06), handling the known traps: login-only subtitles
+  (`need_login_subtitle`), http/protocol-relative `subtitle_url`, placeholder
+  entries, short-lived auth_key, v_voucher risk-control responses.
+- Degradation ladder (§7.5.3): transcript failure still yields a video note
+  with `fallback: video-transcript-missing` + reason in frontmatter; total
+  provider failure falls back to generic extraction tagged
+  `<platform>-video-failed`. All requests run in the content script with the
+  user's cookies — no new host_permissions, no server-side scraping exposure.
+- Frontmatter gains `duration`; Bilibili embeds use `player.bilibili.com`
+  (verified present in Notes' embed CSP frame-src whitelist). Multi-part
+  videos clip the current part (`?p=`, part title appended). Bangumi/cheese
+  pages, AI summaries/cleanup and keyframe capture are explicitly out of
+  scope for now (§7.5.5).
+- Verified: 74 unit tests green (URL detection, JSON brace-scan, track
+  selection, json3/chapter parsing, cue merging, rendering); `tsc` and
+  `wxt build` clean; live smoke against the real sites confirmed watch-page
+  parsing, both Bilibili APIs, and surfaced that cookie-less timedtext
+  requests answer empty 200 — handled as a clear transcript-missing reason.
+  In-browser end-to-end (logged-in Bilibili AI subtitles, YouTube timedtext
+  with a real session) still needs a manual pass.
+
+### YouTube transcript fix (PO token) + WeChat article handler (2026-06-11)
+
+- **YouTube transcript fix**: first real-world test produced video notes
+  without transcripts. Root cause (matches the empty-200 seen in the earlier
+  smoke test): since 2025 YouTube gates caption baseUrls from WEB-context
+  player responses behind a per-video PO token — without it timedtext answers
+  an empty 200 body, logged in or not. Fix: caption sources now waterfall
+  InnerTube IOS client → InnerTube WEB → watch-page HTML (the ladder
+  Defuddle/Obsidian Clipper converged on in 2026-04); IOS-sourced baseUrls
+  carry no token requirement. Caption URLs are fetched as-is (no fmt
+  override, no custom headers — a UA header triggers an unanswerable CORS
+  preflight) and parsed from both srv3 and srv1 XML; an empty body fails over
+  to the next source. Verified live from Node (cookie-less, stricter than the
+  extension context): IOS track list + full transcript parse OK.
+- **WeChat handler** (`lib/extract/wechat.ts`, design §7.6): mp.weixin.qq.com
+  articles bypass Defuddle (whose hidden-element removal and lazy-image
+  handling break on this site) — `#js_content` is cloned, repaired
+  (`data-src`→`src` for all images incl. carousel slides; formatter code
+  blocks normalized to real newlines; channels-video/voice/iframe replaced
+  with a link back to the article) and converted with Turndown. Metadata from
+  og:title/og:url, `#js_name` (account name, not og:article:author),
+  inline-script `var ct` for the publish date. New mmbiz.qpic.cn image-cdn
+  rule upgrades size-capped URLs (`/640`) to the `/0` original and strips
+  `tp=webp`; hotlink protection passes referer-less background fetches
+  (verified), placeholder-image detection left as a known edge.
+- Notion assessment (researched, no code): generic Defuddle extraction is
+  adequate on notion.site pages (~98% text in a live test; no block
+  virtualization; images eager + same-site proxy URLs that our clip-time
+  download handles well). Known losses: collapsed toggles (children absent
+  from the DOM), database views, list numbering. Revisit only if those hurt
+  in practice.
+- 85 unit tests green; tsc/build/zip clean.
+
+### Feedback round: transcript granularity, description, frontmatter slimming (2026-06-11)
+
+- Transcript paragraphs were walls of text for Chinese (600-char/90s caps
+  tuned for latin scripts). Now CJK-weighted: a CJK glyph counts double, cap
+  360 weight (~180 CJK chars / ~360 latin chars) and 45s — Chinese paragraphs
+  land at 3-4 lines with a timestamp anchor each.
+- Frontmatter `description` no longer takes the first description line (often
+  boilerplate like membership links); the whole description is flattened to
+  one line and capped at 200 chars.
+- Removed `clipped` / `clipper` / `tags: [clipped]` from all clip frontmatter
+  (owner decision: noise; clip time ~= note creation time).
+- 87 unit tests green; tsc/build/zip clean.
+
+### Transcript shaping refinements + transcript kind field (2026-06-11)
+
+- Cue boundaries are now preserved as a space when merging (they are the only
+  sentence-ish hint in unpunctuated auto captions; previously CJK cues were
+  concatenated seamlessly). No space added after fullwidth punctuation.
+- Paragraph caps are soft for punctuated captions: the break waits for the
+  sentence to end (up to a 1.5x hard cap), so paragraphs no longer cut
+  sentences mid-way. Unpunctuated ASR keeps breaking at the caps on a cue
+  boundary.
+- New frontmatter field `transcript: auto | manual` (asr/ai-* vs human
+  captions) — groundwork for a future notes-side AI cleanup pass that needs
+  to select exactly the notes with machine transcripts.
+- 89 unit tests green; tsc/build/zip clean.
+
+### Transcript paragraphing v2: 15-30s window, largest-pause, speaker turns (2026-06-11)
+
+Rewrote mergeIntoParagraphs around the industry break-priority ladder
+(researched: Defuddle sentence-grouping + 30s ASR cap, Glasp 30s windows,
+transcription-industry 15/30/60s guidance):
+- Target span 15-30s (was up to 45s): no length break before 15s; from 30s
+  (or the 360-weight cap) split at the best natural point.
+- Punctuated captions split at the last sentence end past 15s — sentences
+  are never cut below the 1.5x hard cap; beyond it, largest pause.
+- Unpunctuated ASR splits at the largest inter-cue pause past 15s instead of
+  an arbitrary cue boundary.
+- Speaker-change markers force a break: ">>" (CEA-608/708 captioning
+  convention, used by YouTube) and leading "- " (subtitle dialogue
+  convention); markers are stripped from the text.
+- 91 unit tests green; tsc/build/zip clean.
+
+### Fix: decimal dots defeated the punctuation detection (2026-06-11)
+
+Real-video report (_4EyT2qar4U): paragraphs ran to the 45s hard cap instead
+of the 15-30s target. The track is a creator-uploaded zh subtitle with no
+sentence punctuation, but cues containing "USB 3.0" / "11.5瓦时" made the
+naive some()-based punctuation check flag the whole track as punctuated, so
+every break waited for a sentence end that never came. The flag now counts
+cues ENDING with sentence punctuation (>=3 and >=5% of cues) — the exact
+signal the splitter uses. Verified against the reported video: spans now
+19-30s (one 76s span is a real 72s captionless stretch). 93 tests green.
+
+### Fix: Bilibili subtitle fetch blocked by credentialed CORS (2026-06-11)
+
+Real-world Bilibili clips degraded with fallback_reason "Failed to fetch".
+api.bilibili.com echoes the origin with allow-credentials (verified), so the
+metadata/player calls pass — the failing hop was the subtitle file on
+aisubtitle.hdslb.com, fetched with credentials:'include' against a CDN that
+answers wildcard CORS; the browser rejects credentialed wildcard reads. The
+subtitle URL carries its own short-lived auth_key, so the fetch now uses
+credentials:'omit' (matching the player's own cookie-less fetch). Every
+bilibili fetch hop now labels its errors, so a future fallback_reason names
+the exact failing endpoint instead of a bare "Failed to fetch".
+
+### Long-term review round: 7-angle code review, 13 fixes (2026-06-11)
+
+Pre-commit review (7 parallel finder angles, verified findings) surfaced and
+fixed, most severe first:
+- WeChat images were never localized: mmbiz.qpic.cn only answers CORS for
+  qq-family origins (verified live), so the background worker's fetch could
+  not read the bytes — added the extension's first host_permission
+  (https://mmbiz.qpic.cn/*) and corrected design §7.6.
+- UTC date off-by-one: bilibili/wechat epoch timestamps formatted via
+  toISOString() recorded the previous day for anything published before
+  08:00 CST — new shared epochToLocalDate (lib/extract/epoch-date.ts).
+- Video description was injected into the note as raw markdown ('-----'
+  separator lines turned the line above into a giant setext heading) — new
+  escapePlainTextBlock defuses line-level markdown triggers; summary
+  truncation is now code-point-safe (no split surrogate pairs).
+- "- " speaker-change marker now only applies when dashes are the exception
+  (<=50% of cues), so dash-styled subtitle tracks no longer explode into
+  one paragraph per cue.
+- WeChat: nickname fallback now HTML-entity-decodes and unescapes the inline
+  script string; body goes through normalizeBlockMath (the 8542a22
+  invariant); empty/missing #js_content now degrades visibly with
+  fallback: wechat-article-failed instead of silently falling to Defuddle.
+- Deduped: lazy-image + URL-absolutization helpers unified in
+  lib/extract/fragment.ts (chain selection path + wechat share one
+  implementation, data-lazy-src added); entity decoding shared in
+  entities.ts; YouTube watch-page fetch now runs concurrently with InnerTube
+  (it stays: IOS responses carry no microformat, verified live); transcript
+  cue weights computed once; bilibili deep links derive from meta.url;
+  chain's degraded-article fallback extracted into one helper used by both
+  video and wechat; i18n resolution unified at the chain boundary (handler
+  pipelines stay pure); frontmatter transcript field goes through yamlScalar.
+- 101 unit tests green; tsc/build/zip clean.

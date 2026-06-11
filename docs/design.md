@@ -1,6 +1,6 @@
 # Sanqian Notes Web Clipper 设计文档
 
-状态：草案 v2.1（2026-06-08，长期主义 review + 源码核实通过）
+状态：草案 v2.2（2026-06-11，新增视频 handler 长期方案 §7.5）
 关联仓库：
 - 扩展：`~/dev/sanqian-notes-clipper`（本仓库，全新）
 - 桌面端：`~/dev/sanqian-notes`（Electron 笔记 app，需少量改动）
@@ -18,6 +18,11 @@
   1. 已逐文件核实 notes 集成点（bridge 鉴权/路由/端口文件、工具机制、create_note、saveAttachmentBuffer、arxivImporter 单例 + parseArxivInput），结论无偏，见 §14。
   2. 决策：arxiv 经 `import_arxiv` 失败时**退回 generic 剪藏**，兜底归属在扩展编排层（§7.2）。
   3. 决策：PDF 一期走 **C 方案**——识别到 PDF 即提示用户改用 notes 内置「导入 PDF」，不在 clipper 处理（§7.3）。
+- v2.1 → v2.2（2026-06-11，视频剪藏）：
+  1. 新增视频 handler 长期方案（§7.5）：平台无关的 VideoClip 中间模型 + 共享渲染器，YouTube/B 站为前两个 provider。调研结论与 API 链路依据见 §7.5.6。
+- v2.2 → v2.3（2026-06-11，同日修订）：
+  1. YouTube 字幕来源改为 InnerTube IOS client 瀑布（§7.5.2）——实测发现 WEB 来源 baseUrl 被 PO token 拦截（空 200），watch 页 HTML 降级为元数据源 + 字幕兜底。
+  2. 新增微信公众号文章 handler（§7.6）：`#js_content` 直取 + DOM 修复 + Turndown，绕开 Defuddle 在该站的四个坏点；mmbiz 图片 `/0` 原图升级规则。
 
 ## 1. 目标与边界
 
@@ -185,7 +190,64 @@ PDF URL 在学术/资料场景很常见，但 notes 现有 PDF importer 有三�
 - C.（一期采用）暂不处理 PDF，遇到 PDF URL 提示用户走 notes 内的「导入 PDF」。
 
 ### 7.4 后续可加的 handler（占位）
-YouTube（字幕/transcript）、X/Twitter（长推串展开）、GitHub（README/代码）、微信公众号（防盗链图）。均以新 `ClipHandler` 插入链中，不改主流程。
+X/Twitter（长推串展开）、GitHub（README/代码）、微信公众号（防盗链图）。均以新 `ClipHandler` 插入链中，不改主流程。YouTube/B 站已落地，见 §7.5。
+
+### 7.5 视频 handler（YouTube / Bilibili，2026-06-11 落地）
+
+**价值定位**：视频剪藏的核心收益是"字幕全文入库、可搜索、可跳回原片时间点"，不是收藏一张视频卡片。产物 = 嵌入播放器 + 元数据 + 简介 + 按章节组织、带时间戳深链的 transcript 全文。
+
+#### 7.5.1 长期架构：平台无关模型 + provider
+
+```
+URL → provider（平台专属：取数）→ VideoClip（平台无关中间模型）→ 共享渲染器 → MarkdownPayload
+```
+
+- `lib/extract/video/types.ts`：`VideoClip = { meta, chapters[], transcript[], transcriptIssue?, timestampUrl(sec) }`。
+- `lib/extract/video/transcript.ts`：纯函数——字幕碎片合并成段落（按时间间隔/长度/章节边界断段）、CJK 感知拼接、时间戳格式化。
+- `lib/extract/video/render.ts`：模型 → markdown 正文 + frontmatter。**笔记格式只在这里定义一次**，加第 N 个平台不改产物格式、无迁移成本。
+- `lib/extract/video/{youtube,bilibili}.ts`：每个平台一个 provider，只负责"把平台数据填进模型"。新增平台 = 新增一个 provider 文件。
+
+#### 7.5.2 取数原则：fetch-first，绝不碰 DOM/播放器内部
+
+调研结论（§7.5.6）：DOM 抓取（transcript 面板选择器）和页面全局变量（SPA 导航后过期）是最脆的两层，YouTube 2026-02 一次 UI 改版击穿了 Obsidian 社区所有 DOM 模板；B 站已移除播放器内部对象。因此 provider 全部走 fetch（content script 内、带用户 cookie）：
+
+- **YouTube**：字幕来源按可靠性瀑布（2026-06-11 修订）：**InnerTube `POST youtubei/v1/player`（IOS client）→ InnerTube WEB client → watch 页 HTML 的 `ytInitialPlayerResponse`**。原因：2025 年起 WEB 来源的字幕 baseUrl 要求按视频绑定的 PO token，缺 token 时 timedtext 返回**空 200**（登录与否都一样）；IOS client 拿到的 baseUrl 不带该要求（与 Defuddle/Obsidian Clipper 2026-04 收敛到的同一套方案，实测有效）。watch 页 HTML 仍然必拉——它是唯一带 microformat（发布日期）的元数据源和字幕兜底。字幕 baseUrl **原样裸 fetch**（不加 fmt、不加任何自定义 header——UA header 会触发 timedtext 答不了的 CORS preflight），解析兼容 srv3（`<p t><s>`）与 srv1（`<text start>`）两种 XML；空 body 视为该来源失败、走下一级。选轨：人工优先于 asr，语言偏好 浏览器语言 → zh → en。章节从简介的时间戳行解析（与 YouTube chapters 同源），要求 ≥3 行、首行 0:00、严格递增。
+- **Bilibili**：`x/web-interface/view?bvid=` 出元数据 + 分 P 的 cid（无需登录/签名）；`x/player/wbi/v2?aid=&cid=` 一次拿字幕列表 + 章节（view_points，"看点"）。实测（2026-06）该接口无需 wbi 签名；字幕需登录（`need_login_subtitle`），未登录时降级。字幕 URL 需补 `https:`（可能是 `http://` 或 `//`）、带时效 auth_key 须立即 fetch、过滤 `subtitle_url` 为空的占位条目；选轨优先级 人工 zh → 人工任意 → ai-zh → 任意。风控防御：`code:0` 但 data 仅含 `v_voucher` 视为失败，不能只判 code。
+- 两个平台的所有请求都在 content script 内发（带页面同源 cookie、CORS 与页面自身一致），**不加任何 host_permissions**——不扩大商店审核面，且天然规避服务端抓取的反爬/PO-token/代理池整套成本（Readwise 模式的代价）。
+
+#### 7.5.3 降级阶梯（绝不丢剪藏）
+
+1. 元数据 + 字幕都拿到 → 完整视频笔记。
+2. 元数据拿到、字幕拿不到（未登录/无字幕/风控）→ 仍产出视频笔记（嵌入 + 简介 + 章节），frontmatter 记 `fallback: video-transcript-missing` + `fallback_reason`（如 `bilibili subtitles require login`），用户可登录后重剪。
+3. provider 整体失败（页面改版/接口变更/consent 页）→ 回落 generic Defuddle 剪藏，frontmatter 记 `fallback: <platform>-video-failed`，与 §7.2 arxiv 降级同一套可见性机制。
+4. 用户随时可用 article 模式强制 generic 路径（现有逃生门，不变）。
+
+#### 7.5.4 产物格式
+
+- frontmatter：复用现有字段（`author`=频道/UP 主，`published`=发布日期，`description`=简介首段截断），新增 `duration`（`h:mm:ss`）。
+- 正文：`<iframe>` 嵌入（YouTube `youtube.com/embed/<id>`；B 站 `player.bilibili.com/player.html?bvid=&p=`，**已核实在 notes 渲染层 CSP frame-src 白名单内**，见 notes `embedUrl.ts` / `index.html`）→ 简介全文 → transcript：有章节按 `## [h:mm:ss](深链) 章节名` 分节，无章节单节；每段落以 `[mm:ss](深链)` 锚点开头。深链 = YouTube `&t=<sec>s` / B 站 `?t=<sec>`（多 P 带 `p=`）。
+- 多 P：标题带 `· P<n> <分P小标题>`，source/深链带 `?p=`，每个分 P 是独立笔记。
+
+#### 7.5.5 范围边界
+
+一期不做：番剧/课程页（另一套 `__INITIAL_STATE__` 与 pgc 接口，且多为内嵌硬字幕，CC 接口拿不到东西）、AI 摘要与字幕清洗（等 notes 侧能力）、关键帧截图、字幕语言选择 UI（默认规则见上）。Shorts 按普通视频处理。
+
+#### 7.5.6 调研依据（2026-06-11）
+
+- 业界产物标杆：Readwise Reader（服务端抓字幕 + time-synced transcript 可高亮）、Obsidian Web Clipper（官方 `{{transcript}}` 变量 + schema.org VideoObject 元数据）；Notion/Evernote/Raindrop 只存书签级信息。
+- 技术路线排序（浏览器扩展场景）：页内/同源 fetch 解析 captionTracks ≻ InnerTube API ≻ DOM 抓取（仅兜底级别）≻ 服务端库（云 IP 大面积被封 + 2025 起 PO token 要求，不适用）。
+- B 站：bilibili-API-collect 原仓库 2026-01 被律师函关停（API 本身未收紧，社区 fork 文档在）；合规上"用户自己浏览器、自己登录态、剪藏时低频调用"是风险最低形态。参考实现：IndieKKY/bilibili-subtitle（哔哔君）。
+
+### 7.6 微信公众号文章 handler（2026-06-11 落地）
+
+通用 Defuddle 在 mp.weixin.qq.com 上有四个确定的坏点（调研 + 实测原始 HTML 验证）：正文 `<img>` **没有 src 属性**（真实地址在 `data-src`，IntersectionObserver 进视口才回填——没滚到的图和轮播非当前页全丢）；`#js_content` 初始 `visibility:hidden;opacity:0`（Defuddle 默认删隐藏元素，时机不对整篇删空）；`<title>`/`#activity-name` 原始为空靠 JS 填、发布时间没有任何 meta（只在 JS 变量 `var ct`）；排版器代码块（逐行 `<code>` 或 `<br>` 换行）通用转换会挤成一行。
+
+处理方式（`lib/extract/wechat.ts`，capture-side handler，链中位于 video 之后、generic 之前）：
+
+- **正文**：直接取 `#js_content` 克隆 → DOM 修复（`data-src`→`src` 全量回填；代码块归一化成单 `<pre><code>` 带真实换行；视频号/音频/iframe 等签名限时媒体替换为回链原文的占位链接）→ Turndown 转 markdown。完全绕开 Defuddle 的隐藏元素删除与正文评分。
+- **元数据**：标题 `og:title`（服务端渲染，可靠）；公众号名 `#js_name` 文本，fallback 内联脚本 `var nickname`；发布时间内联脚本 `var ct`（epoch 秒），fallback `#publish_time` 文本；简介 `og:description`；source 用 `og:url` 规范链接。注意 `og:article:author` 是文章作者字段、不是公众号名，不用。
+- **图片原图**：mmbiz.qpic.cn 加入 image-cdn 升级规则——末段尺寸档（`/640`、`/300`）换 `/0` 拿原图、去掉 `tp=webp` 保源格式；下载失败安全回退页内 URL。防盗链实测：服务端无 Referer 即放行，但 **CORS 只对 qq 系 Origin 回头**（实测 chrome-extension Origin 拿不到 ACAO）——background fetch 读取图片字节必须依赖 manifest 的 `host_permissions: mmbiz.qpic.cn`（MV3 host 权限免 CORS），这是本扩展第一个 host 权限。失败形态是 200 + 140x140 水印占位图而非 403——占位图检测暂未做，记为已知边缘。
+- `#js_content` 不存在（非标准文章页）→ 返回 null 落回 generic。
 
 ## 8. 剪藏流水线（generic 路径）
 
@@ -220,11 +282,10 @@ title: <页面标题>
 source: <页面 URL>
 author: <Defuddle 提取的作者，可空>
 published: <原文发布时间，可空>
-clipped: <剪藏时间 ISO8601>
-clipper: sanqian-notes-clipper/<version>
-tags: [clipped]
 ---
 ```
+
+（2026-06-11 决策：`clipped`/`clipper`/`tags: [clipped]` 三个字段按 owner 要求移除——对用户是噪音；剪藏时间近似等于笔记创建时间，来源由 `source` 表达。）
 
 标题来源优先级：`og:title` → `document.title` → 正文首个 `h1`。arxiv 委托路径的 frontmatter/元数据由 importer 负责，不在此处。
 

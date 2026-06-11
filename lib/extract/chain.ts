@@ -1,15 +1,19 @@
 // The clip handler chain. Runs inside the page (content script).
 //
-// Order (auto mode): arxiv (delegate) -> generic article (Defuddle).
-// Selection mode bypasses the chain. PDF detection (design §7.3, plan C) and
-// future handlers (YouTube, X, ...) slot in here.
+// Order (auto mode): arxiv (delegate) -> video (YouTube/Bilibili, §7.5) ->
+// wechat article (§7.6) -> generic article (Defuddle). Selection mode
+// bypasses the chain. PDF detection (design §7.3, plan C) and future
+// handlers (X, ...) slot in here.
 
+import { i18n } from '#i18n';
 import Defuddle from 'defuddle/full';
-import type { ClipMode, ClipPayload } from '@/lib/handlers/types';
+import type { ClipMode, ClipPayload, MarkdownPayload } from '@/lib/handlers/types';
 import { isArxivUrl } from './arxiv';
+import { tryVideoClip } from './video';
+import { isWeChatArticleUrl, extractWeChatArticle } from './wechat';
 import { htmlFragmentToMarkdown } from './turndown';
 import { normalizeBlockMath } from './normalize-block-math';
-import { largestSrcsetUrl, isPlaceholderSrc } from './srcset';
+import { resolveResponsiveImages, absolutizeUrls } from './fragment';
 
 export async function runChain(mode: ClipMode): Promise<ClipPayload> {
   const url = location.href;
@@ -18,15 +22,43 @@ export async function runChain(mode: ClipMode): Promise<ClipPayload> {
     return extractSelection(url);
   }
 
-  // 'article' forces generic extraction (also used as the arxiv fallback).
-  if (mode === 'auto' && isArxivUrl(url)) {
-    return { kind: 'delegate', tool: 'import_arxiv', args: { id_or_url: url } };
+  // 'article' forces generic extraction (also the arxiv/video/wechat fallback).
+  if (mode === 'auto') {
+    if (isArxivUrl(url)) {
+      return { kind: 'delegate', tool: 'import_arxiv', args: { id_or_url: url } };
+    }
+    const video = await tryVideoClip(url, {
+      transcript: i18n.t('note.transcript'),
+      chapters: i18n.t('note.chapters'),
+    });
+    if (video.kind === 'video') {
+      return video.payload;
+    }
+    if (video.kind === 'failed') {
+      return degradedArticle(url, `${video.platform}-video-failed`, video.reason);
+    }
+    if (isWeChatArticleUrl(url)) {
+      const wechat = extractWeChatArticle({ originalMedia: i18n.t('note.originalMedia') });
+      if (wechat.kind === 'markdown') return wechat;
+      return degradedArticle(url, 'wechat-article-failed', wechat.reason);
+    }
   }
 
   return extractArticle(url);
 }
 
-async function extractArticle(url: string): Promise<ClipPayload> {
+// A specialized handler matched the URL but broke (site/API change): keep the
+// clip via generic extraction and record the degradation in the frontmatter,
+// the same visibility mechanism as the arxiv delegate fallback (design §7.5.3
+// step 3). `code` follows the `<handler>-failed` grammar.
+async function degradedArticle(url: string, code: string, reason: string): Promise<MarkdownPayload> {
+  const payload = await extractArticle(url);
+  payload.frontmatter.fallback = code;
+  payload.frontmatter.fallbackReason = reason;
+  return payload;
+}
+
+async function extractArticle(url: string): Promise<MarkdownPayload> {
   const result = await new Defuddle(document, { url, markdown: true }).parseAsync();
   const title = result.title || document.title || 'Untitled';
   const markdown = normalizeBlockMath((result.content || '').trim());
@@ -43,48 +75,6 @@ async function extractArticle(url: string): Promise<ClipPayload> {
       description: result.description || undefined,
     },
   };
-}
-
-// Selections carry no <base> and bypass Defuddle's image handling, so resolve
-// responsive/lazy-loaded images to the best candidate the page references
-// before converting to Markdown: prefer the largest srcset candidate (from the
-// <img> or its <picture> sources), else a lazy-load data-src when the visible
-// src is just a placeholder. Then drop srcset so absolutize/Turndown use src.
-function resolveResponsiveImages(root: HTMLElement): void {
-  root.querySelectorAll('img').forEach((img) => {
-    const srcset =
-      img.getAttribute('srcset') ||
-      img.getAttribute('data-srcset') ||
-      img.closest('picture')?.querySelector('source[srcset]')?.getAttribute('srcset') ||
-      '';
-    const lazy = img.getAttribute('data-src') || img.getAttribute('data-original');
-
-    let chosen = srcset ? largestSrcsetUrl(srcset) : null;
-    if (!chosen && lazy && isPlaceholderSrc(img.getAttribute('src') || '')) {
-      chosen = lazy;
-    }
-    if (chosen) img.setAttribute('src', chosen);
-    img.removeAttribute('srcset');
-    img.removeAttribute('sizes');
-  });
-  root.querySelectorAll('source[srcset]').forEach((el) => el.removeAttribute('srcset'));
-}
-
-// Resolve relative src/href in a cloned fragment to absolute URLs (selections
-// carry no <base>, so relative image/link URLs would otherwise break / not
-// localize).
-function absolutizeUrls(root: HTMLElement): void {
-  const fix = (el: Element, attr: string): void => {
-    const value = el.getAttribute(attr);
-    if (!value || /^(?:data|blob|mailto|javascript):/i.test(value)) return;
-    try {
-      el.setAttribute(attr, new URL(value, location.href).href);
-    } catch {
-      // leave as-is
-    }
-  };
-  root.querySelectorAll('[src]').forEach((el) => fix(el, 'src'));
-  root.querySelectorAll('a[href]').forEach((el) => fix(el, 'href'));
 }
 
 // Title for a selection: prefer a heading inside it, else its first line of
@@ -112,7 +102,7 @@ function extractSelection(url: string): ClipPayload {
     container.appendChild(selection.getRangeAt(i).cloneContents());
   }
   resolveResponsiveImages(container);
-  absolutizeUrls(container);
+  absolutizeUrls(container, location.href);
 
   const body = normalizeBlockMath(htmlFragmentToMarkdown(container.innerHTML).trim());
   if (!body) {
