@@ -1,5 +1,10 @@
 {
   "extDescription": "将网页剪藏到三千笔记。",
+  "note": {
+    "transcript": "字幕全文",
+    "chapters": "章节",
+    "originalMedia": "视频/音频内容见原文"
+  },
   "popup": {
     "header": "三千笔记",
     "notebook": "笔记本",

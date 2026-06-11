@@ -1,5 +1,10 @@
 {
   "extDescription": "Clip web pages into Sanqian Notes.",
+  "note": {
+    "transcript": "Transcript",
+    "chapters": "Chapters",
+    "originalMedia": "Video/audio in the original article"
+  },
   "popup": {
     "header": "Sanqian Notes",
     "notebook": "Notebook",

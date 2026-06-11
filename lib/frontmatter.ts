@@ -4,9 +4,6 @@
 
 import type { ClipFrontmatter, MarkdownPayload } from './handlers/types';
 
-const CLIPPER_ID = 'sanqian-notes-clipper/0.0.1';
-const CLIPPED_TAG = 'clipped';
-
 // Quote values that would otherwise break YAML flow scalars. Conservative:
 // only a small set of plainly-safe characters stay unquoted; anything with a
 // colon, hash, bracket, quote, etc. is double-quoted (JSON encoding is valid
@@ -16,17 +13,19 @@ function yamlScalar(value: string): string {
   return safe ? value : JSON.stringify(value);
 }
 
-export function buildFrontmatter(fm: ClipFrontmatter, clippedAt: string): string {
+export function buildFrontmatter(fm: ClipFrontmatter): string {
   const lines = ['---', `title: ${yamlScalar(fm.title)}`, `source: ${yamlScalar(fm.source)}`];
   if (fm.author) lines.push(`author: ${yamlScalar(fm.author)}`);
   if (fm.published) lines.push(`published: ${yamlScalar(fm.published)}`);
   if (fm.description) lines.push(`description: ${yamlScalar(fm.description)}`);
+  if (fm.duration) lines.push(`duration: ${yamlScalar(fm.duration)}`);
+  if (fm.transcript) lines.push(`transcript: ${yamlScalar(fm.transcript)}`);
   if (fm.fallback) lines.push(`fallback: ${yamlScalar(fm.fallback)}`);
   if (fm.fallbackReason) lines.push(`fallback_reason: ${yamlScalar(fm.fallbackReason)}`);
-  lines.push(`clipped: ${clippedAt}`, `clipper: ${CLIPPER_ID}`, `tags: [${CLIPPED_TAG}]`, '---', '');
+  lines.push('---', '');
   return lines.join('\n');
 }
 
-export function buildNoteContent(payload: MarkdownPayload, clippedAt: string): string {
-  return `${buildFrontmatter(payload.frontmatter, clippedAt)}${payload.markdown}\n`;
+export function buildNoteContent(payload: MarkdownPayload): string {
+  return `${buildFrontmatter(payload.frontmatter)}${payload.markdown}\n`;
 }

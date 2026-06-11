@@ -275,7 +275,7 @@ async function createNoteFromPayload(
   notebookId: string | undefined,
 ): Promise<NativeResponse<CreateNoteResult>> {
   const markdown = await localizeMedia(payload.markdown);
-  const content = buildNoteContent({ ...payload, markdown }, new Date().toISOString());
+  const content = buildNoteContent({ ...payload, markdown });
   const args: Record<string, unknown> = { title: payload.title, content };
   if (notebookId) {
     args.notebook_id = notebookId;
