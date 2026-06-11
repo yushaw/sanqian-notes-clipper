@@ -411,3 +411,25 @@ fixed, most severe first:
   video and wechat; i18n resolution unified at the chain boundary (handler
   pipelines stay pure); frontmatter transcript field goes through yamlScalar.
 - 101 unit tests green; tsc/build/zip clean.
+
+### Release prep: v0.1.0 (2026-06-11)
+
+Second review pass (fix-round delta + release-readiness) before the store
+upload:
+- Fixed: decodeHtmlEntities threw RangeError on out-of-range numeric
+  references (&#x110000;) — could fail a whole wechat clip or drop a whole
+  YouTube transcript; now left undecoded.
+- Corrected a premise from the previous round: WXT auto-injects <all_urls>
+  host_permissions for the runtime-registered content script (shipped since
+  0.0.1), which is what exempts background media downloads from CORS — the
+  mmbiz.qpic.cn host permission added earlier was redundant and is removed
+  (manifest permissions unchanged vs 0.0.1: no new install warning).
+- Release prep: version 0.1.0; store listing (summary, descriptions,
+  single-purpose statement) now covers video transcripts + WeChat articles;
+  PRIVACY.md documents the credentialed transcript fetches to the video
+  sites (nothing leaves the device) and gets a new date.
+- 102 unit tests green; manifest verified: version 0.1.0, permissions
+  identical to the released 0.0.1.
+- Upload artifact: output/sanqian-notes-clipper-0.1.0-chrome.zip. Remaining
+  manual dashboard steps per docs/PUBLISHING.md: paste updated listing
+  texts, re-certify data-use disclosures, submit for review.

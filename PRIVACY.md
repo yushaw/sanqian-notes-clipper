@@ -1,6 +1,6 @@
 # Privacy Policy — Sanqian Clipper
 
-_Last updated: 2026-06-08_
+_Last updated: 2026-06-11_
 
 Sanqian Clipper is a browser extension that saves web pages into your own,
 locally-installed Sanqian Notes desktop app. Your privacy is simple to describe
@@ -12,6 +12,12 @@ When you click the extension and choose to clip the current page, the extension
 reads content from that page — its title, text, images, and any text you have
 selected — and converts it to Markdown. To localize images and videos, it
 downloads them from the page.
+
+When you clip a video page (YouTube or Bilibili), the extension also fetches
+the video's metadata and subtitle/transcript data from the video site itself,
+using your existing browser session — the same kind of requests the page's own
+player makes. That data goes into the clipped note; nothing is sent anywhere
+else.
 
 ## Where that data goes
 

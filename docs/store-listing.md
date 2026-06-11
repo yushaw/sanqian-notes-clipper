@@ -9,8 +9,8 @@ Keep this in sync when re-submitting. Store item id: `laalgfbnbddjohobhaibbiafcj
 Sanqian Clipper
 
 ### Summary / Category
-- Summary (en, ≤132): `Clip web pages, articles, selections, and arXiv papers straight into your local Sanqian Notes app.`
-- Summary (zh): `将网页、文章、选区和 arXiv 论文一键剪藏到三千笔记。`
+- Summary (en, ≤132): `Clip web pages, video transcripts, WeChat articles, and arXiv papers straight into your local Sanqian Notes app.`
+- Summary (zh): `将网页、视频字幕、公众号文章和 arXiv 论文一键剪藏到三千笔记。`
 - Category: **Tools** (Chrome has no "Productivity"; Tools or Workflow & Planning fit).
 
 ### Description (English)
@@ -19,6 +19,8 @@ Sanqian Clipper saves what you're reading on the web straight into your own Sanq
 
 WHAT YOU CAN CLIP
 - Article: extracts the main content of a page into tidy Markdown, keeping the title, author, source URL, and date (and dropping the ads, nav, and clutter).
+- Video: clip a YouTube or Bilibili video as a note with the embedded player, chapters, and the full transcript — searchable, with every paragraph linking back to its exact moment in the video.
+- WeChat: clip official-account articles (mp.weixin.qq.com) with every image preserved at full resolution.
 - Selection: clip just the text you've highlighted, with a link back to the source.
 - arXiv: open an arXiv paper and import it as a structured note — abstract, sections, figures, and references.
 
@@ -41,6 +43,8 @@ Sanqian Clipper works together with the Sanqian Notes desktop app, which provide
 
 能剪什么
 - 正文：自动提取页面主体内容，转成整洁的 Markdown，保留标题、作者、来源链接和日期，去掉广告、导航和杂物。
+- 视频：剪藏 YouTube / B 站视频，自动抓取字幕全文并按章节整理——全文可搜索，每个段落都能跳回视频对应的时间点。
+- 公众号：完整剪藏微信公众号文章，所有图片以原图保留。
 - 选区：只剪你选中的那段文字，并附带回原文的链接。
 - arXiv：打开一篇 arXiv 论文，导入为结构化笔记——摘要、章节、配图、参考文献一应俱全。
 
@@ -61,7 +65,7 @@ Sanqian Clipper works together with the Sanqian Notes desktop app, which provide
 
 ### Single purpose description
 ```
-Sanqian Clipper saves web content — a full article, a text selection, or an arXiv paper — from the current page into the user's local Sanqian Notes desktop app as a Markdown note.
+Sanqian Clipper saves web content — a full article, a text selection, a video page with its transcript, a WeChat article, or an arXiv paper — from the current page into the user's local Sanqian Notes desktop app as a Markdown note.
 ```
 
 ### Permission justifications (one box each)

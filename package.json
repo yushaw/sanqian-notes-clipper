@@ -1,6 +1,6 @@
 {
   "name": "sanqian-notes-clipper",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "description": "Web clipper browser extension for Sanqian Notes",
   "private": true,
   "type": "module",

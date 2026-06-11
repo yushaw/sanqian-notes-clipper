@@ -8,7 +8,8 @@ export function decodeHtmlEntities(text: string): string {
   return text.replace(/&(#x?[0-9a-f]+|\w+);/gi, (whole, name: string) => {
     if (name.startsWith('#')) {
       const code = /^#x/i.test(name) ? Number.parseInt(name.slice(2), 16) : Number.parseInt(name.slice(1), 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : whole;
+      // Out-of-range references would make fromCodePoint throw.
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
     }
     return NAMED_ENTITIES[name.toLowerCase()] ?? whole;
   });

@@ -9,4 +9,8 @@ describe('decodeHtmlEntities', () => {
   it('leaves unknown entities and plain text untouched', () => {
     expect(decodeHtmlEntities('&unknown; plain')).toBe('&unknown; plain');
   });
+
+  it('leaves out-of-range numeric references untouched instead of throwing', () => {
+    expect(decodeHtmlEntities('&#x110000; and &#1234567890;')).toBe('&#x110000; and &#1234567890;');
+  });
 });

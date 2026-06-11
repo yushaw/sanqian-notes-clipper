@@ -253,7 +253,7 @@ URL → provider（平台专属：取数）→ VideoClip（平台无关中间模
 
 - **正文**：直接取 `#js_content` 克隆 → DOM 修复（`data-src`→`src` 全量回填；代码块归一化成单 `<pre><code>` 带真实换行；视频号/音频/iframe 等签名限时媒体替换为回链原文的占位链接）→ Turndown 转 markdown。完全绕开 Defuddle 的隐藏元素删除与正文评分。
 - **元数据**：标题 `og:title`（服务端渲染，可靠）；公众号名 `#js_name` 文本，fallback 内联脚本 `var nickname`；发布时间内联脚本 `var ct`（epoch 秒），fallback `#publish_time` 文本；简介 `og:description`；source 用 `og:url` 规范链接。注意 `og:article:author` 是文章作者字段、不是公众号名，不用。
-- **图片原图**：mmbiz.qpic.cn 加入 image-cdn 升级规则——末段尺寸档（`/640`、`/300`）换 `/0` 拿原图、去掉 `tp=webp` 保源格式；下载失败安全回退页内 URL。防盗链实测：服务端无 Referer 即放行，但 **CORS 只对 qq 系 Origin 回头**（实测 chrome-extension Origin 拿不到 ACAO）——background fetch 读取图片字节必须依赖 manifest 的 `host_permissions: mmbiz.qpic.cn`（MV3 host 权限免 CORS），这是本扩展第一个 host 权限。失败形态是 200 + 140x140 水印占位图而非 403——占位图检测暂未做，记为已知边缘。
+- **图片原图**：mmbiz.qpic.cn 加入 image-cdn 升级规则——末段尺寸档（`/640`、`/300`）换 `/0` 拿原图、去掉 `tp=webp` 保源格式；下载失败安全回退页内 URL。防盗链实测：服务端无 Referer 即放行，但 **CORS 只对 qq 系 Origin 回头**（实测 chrome-extension Origin 拿不到 ACAO）——background fetch 能读到图片字节是因为 manifest 里已有 `<all_urls>` host 权限（WXT 为 runtime 注册的 content script 自动注入，0.0.1 发布版即有；MV3 host 权限免 CORS），无需也不应再加单独的 mmbiz 权限（纯冗余）。失败形态是 200 + 140x140 水印占位图而非 403——占位图检测暂未做，记为已知边缘。
 - `#js_content` 不存在（非标准文章页）→ 返回 null 落回 generic。
 
 ## 8. 剪藏流水线（generic 路径）

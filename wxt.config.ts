@@ -12,11 +12,11 @@ export default defineConfig({
     // nativeMessaging: talk to the com.sanqian_notes.native host.
     // activeTab/scripting: read the current page on user action.
     // storage: remember the chosen notebook (later milestones).
+    // Host permissions: WXT auto-injects <all_urls> for the runtime-registered
+    // content script; that is also what exempts background media downloads
+    // (e.g. WeChat's mmbiz CDN, which answers CORS only to qq origins) from
+    // CORS — do not add narrower per-CDN entries, they would be redundant.
     permissions: ['nativeMessaging', 'activeTab', 'scripting', 'storage'],
-    // WeChat article images live on mmbiz.qpic.cn, which only answers CORS
-    // for qq-family origins — without this host permission the background
-    // worker cannot read the image bytes to localize them (design §7.6).
-    host_permissions: ['https://mmbiz.qpic.cn/*'],
     icons: {
       16: 'icon/16.png',
       32: 'icon/32.png',

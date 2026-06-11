@@ -13,9 +13,10 @@
 //   cannot persist; they degrade to a link back to the article.
 //
 // Size-cap upgrade of mmbiz image URLs (/640 -> /0, tp=webp removal) happens
-// at download time via the image-cdn rule, with safe fallback; downloading
-// them from the background worker needs the mmbiz host permission (the CDN
-// only answers CORS for qq-family origins — see wxt.config.ts).
+// at download time via the image-cdn rule, with safe fallback. The mmbiz CDN
+// answers CORS only to qq-family origins, but the manifest's <all_urls> host
+// permission (WXT-injected for the runtime content script) exempts the
+// background worker's downloads from CORS.
 
 import type { MarkdownPayload } from '@/lib/handlers/types';
 import { htmlFragmentToMarkdown } from './turndown';
