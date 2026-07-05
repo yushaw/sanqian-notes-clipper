@@ -48,6 +48,10 @@ const MAX_MEDIA_BYTES = 80 * 1024 * 1024;
 // largest in-flight item). Retry each chunk a few times to survive transient blips.
 const LOCALIZE_CONCURRENCY = 5;
 const CHUNK_RETRIES = 2;
+// Retry a media download a few times on transient failures (network blip, 5xx,
+// 429) before giving up — mirrors the chunk-upload retry budget. A 4xx is not
+// retried (a missing/forbidden asset will not appear on a retry).
+const MEDIA_FETCH_RETRIES = 2;
 
 function unwrapUrl(raw: string): string {
   const t = raw.trim();
@@ -83,15 +87,29 @@ interface Binary {
 }
 
 async function fetchBinary(url: string): Promise<Binary | null> {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const mime = (res.headers.get('content-type') ?? '').split(';')[0].trim();
-    const buf = await res.arrayBuffer();
-    if (buf.byteLength === 0 || buf.byteLength > MAX_MEDIA_BYTES) return null;
-    return { bytes: new Uint8Array(buf), mime };
-  } catch {
-    return null;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        // Retry only transient server states; a 4xx won't improve on a retry.
+        if ((res.status >= 500 || res.status === 429) && attempt < MEDIA_FETCH_RETRIES) {
+          await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
+          continue;
+        }
+        return null;
+      }
+      const mime = (res.headers.get('content-type') ?? '').split(';')[0].trim();
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength === 0 || buf.byteLength > MAX_MEDIA_BYTES) return null;
+      return { bytes: new Uint8Array(buf), mime };
+    } catch {
+      // Network-level error: retry a few times before giving up.
+      if (attempt < MEDIA_FETCH_RETRIES) {
+        await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
+        continue;
+      }
+      return null;
+    }
   }
 }
 
