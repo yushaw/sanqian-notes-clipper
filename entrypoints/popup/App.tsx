@@ -179,16 +179,21 @@ export function App() {
         </button>
       ) : (
         <button
-          className={`clipper__button ${succeeded ? 'is-saved' : ''}`}
+          className={`clipper__button ${running ? 'is-clipping' : ''} ${succeeded ? 'is-saved' : ''}`}
           onClick={clip}
           onMouseEnter={acknowledge}
           disabled={running || !canClip}
         >
-          {running
-            ? i18n.t('popup.clipping')
-            : succeeded
-              ? `${i18n.t('popup.status.saved')}: ${job?.title ?? i18n.t('popup.status.note')}`
-              : clipLabel}
+          {running ? (
+            <span className="clipper__loading">
+              <span className="clipper__spinner" aria-hidden="true" />
+              {i18n.t('popup.clipping')}
+            </span>
+          ) : succeeded ? (
+            `${i18n.t('popup.status.saved')}: ${job?.title ?? i18n.t('popup.status.note')}`
+          ) : (
+            clipLabel
+          )}
         </button>
       )}
 

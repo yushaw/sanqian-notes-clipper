@@ -111,8 +111,44 @@ body {
   cursor: not-allowed;
 }
 
+/* While clipping the button is disabled to block double-fires, but the spinner
+   conveys progress, so keep it at full strength rather than the dimmed look. */
+.clipper__button.is-clipping {
+  opacity: 1;
+  cursor: progress;
+}
+
 .clipper__button.is-saved {
   background: #137333;
+}
+
+.clipper__loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.clipper__spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #ffffff66;
+  border-top-color: #fff;
+  animation: clipper-spin 0.7s linear infinite;
+}
+
+@keyframes clipper-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clipper__spinner {
+    animation-duration: 1.4s;
+  }
 }
 
 .clipper__status {
